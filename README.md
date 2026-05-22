@@ -205,9 +205,4 @@ python 3.6.2.py --interactive
 - il motivo principale sono i problemi di compatibilita tra `rasterio`, `GDAL` e DLL Windows
 - per uso stabile e riproducibile conviene WSL/Linux
 
-## Prossimi passi consigliati per GitHub
 
-- aggiungere `.gitignore`
-- aggiungere `pyproject.toml`
-- ripulire file legacy e cartelle non necessarie
-- definire meglio quali output e input versionare e quali no
