@@ -1,0 +1,27 @@
+.git
+.gitignore
+.idea
+.venv
+.venv_linux
+modis_env
+__pycache__
+*.pyc
+*.pyo
+.pytest_cache
+outputs
+WORKING_S2
+S2
+S2_OUTPUT
+AOI_MODIS
+BUCHI
+PATCH_R05_2025_03
+PROCESSI NCVC
+stast-r05
+*.tif
+*.tif.aux.xml
+*.vrt
+*.gpkg
+*.gpkg-wal
+*.gpkg-shm
+3.6.2_dario.py
+requirements.txt

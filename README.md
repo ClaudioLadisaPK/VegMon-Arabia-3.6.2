@@ -205,4 +205,46 @@ python 3.6.2.py --interactive
 - il motivo principale sono i problemi di compatibilita tra `rasterio`, `GDAL` e DLL Windows
 - per uso stabile e riproducibile conviene WSL/Linux
 
+## Uso con Docker
 
+Docker non e obbligatorio, ma e utile per avere un ambiente piu riproducibile.
+
+### Build immagine
+
+Dalla root del progetto:
+
+```bash
+docker build -t msimne .
+```
+
+### Avvio interattivo
+
+```bash
+docker run --rm -it -v "$(pwd)/outputs:/app/outputs" msimne --interactive
+```
+
+### Avvio non interattivo
+
+```bash
+docker run --rm -it -v "$(pwd)/outputs:/app/outputs" msimne --region R05 --start 2025-03 --end 2025-04
+```
+
+Nota:
+
+- gli input sono gia dentro l'immagine al momento della build
+- gli output vengono salvati fuori dal container tramite volume mount su `outputs/`
+
+## Come aggiornare GitHub dopo nuove modifiche
+
+Se hai gia fatto un primo push, i push successivi si fanno normalmente.
+
+Esempio:
+
+```bash
+git status
+git add .
+git commit -m "Add Docker support and remove legacy module"
+git push
+```
+
+Non devi creare un nuovo repository: fai solo nuovi commit e nuovi push sullo stesso repo.
