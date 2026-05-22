@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "msimne"
+version = "0.1.0"
+description = "Sentinel-2 processing pipeline for composites, NDVI, mosaics, and AOI statistics."
+readme = "README.md"
+requires-python = ">=3.11"
+authors = [
+  { name = "Ladisa" }
+]
+dependencies = []
+
+[project.scripts]
+msimne = "msimne.cli:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]

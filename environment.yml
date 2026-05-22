@@ -1,0 +1,25 @@
+name: msimne
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - gdal
+  - rasterio
+  - geopandas
+  - rioxarray
+  - xarray
+  - numpy
+  - pandas
+  - shapely
+  - pyproj
+  - pyogrio
+  - dask
+  - distributed
+  - pystac-client
+  - odc-stac
+  - planetary-computer
+  - python-dateutil
+  - requests
+  - pip
+  - pytest
+  - tqdm

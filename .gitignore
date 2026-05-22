@@ -1,0 +1,76 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+
+# Virtual environments
+.venv/
+.venv_linux/
+modis_env/
+
+# IDE
+.idea/
+.vscode/
+
+# Build / packaging
+build/
+dist/
+*.egg-info/
+
+# Project outputs
+outputs/
+WORKING_S2/
+S2/
+S2_OUTPUT/
+
+# Generated statistics and rasters
+S2_stats_*.csv
+*.tif
+*.tif.aux.xml
+*.vrt
+*.gpkg
+*.gpkg-shm
+*.gpkg-wal
+
+# Dask / logs / temp
+dask-worker-space/
+*.log
+tmp/
+temp_*
+
+# Legacy local data / experiments not intended for Git by default
+AOI_MODIS/
+BUCHI/
+PATCH_R05_2025_03/
+PROCESSI NCVC/
+stast-r05/
+
+# Windows noise
+Thumbs.db
+Desktop.ini
+
+# Root-level local data snapshots and legacy GIS files
+/*.geojson
+/*.qmd
+/*.shp
+/*.shx
+/*.dbf
+/*.prj
+/*.cpg
+/*.qix
+/*.csv
+/*.xml
+/*.txt
+
+# Keep project documentation and config files at root
+!/README.md
+!/environment.yml
+!/pyproject.toml
+!/.gitignore
+
+# Exclude legacy or superseded root-level files
+/3.6.2_dario.py
+/requirements.txt
