@@ -90,18 +90,18 @@ Quando e attivo, vedrai qualcosa come:
 pip install --upgrade pip
 ```
 
-### 6. Installa i pacchetti Python
+### 6. Installa il progetto con le dipendenze
 
-Installa almeno questo blocco:
+Le dipendenze runtime sono dichiarate in `pyproject.toml`, quindi usa:
 
 ```bash
-pip install rasterio geopandas rioxarray xarray numpy pandas shapely pyproj pyogrio dask pystac-client planetary-computer python-dateutil requests
+pip install -e .
 ```
 
-Poi installa i pacchetti che nel tuo caso erano rimasti mancanti:
+Se vuoi anche i tool di test:
 
 ```bash
-pip install odc-stac distributed pytest tqdm
+pip install -e ".[dev]"
 ```
 
 ### 7. Test rapido dell'ambiente
@@ -172,6 +172,8 @@ Il refactor usa:
 
 - `inputs/regions/R01.geojson` ... `inputs/regions/R14.geojson`
 - `inputs/grids/ARAB_GRIGLIA.geojson`
+
+La griglia viene cercata in questo percorso, salvo override esplicito con `--grid-file`.
 
 ## Output
 

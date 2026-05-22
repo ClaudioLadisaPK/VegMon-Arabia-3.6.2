@@ -22,4 +22,4 @@ def test_utm_crs_north():
 def test_settings_defaults(tmp_path: Path):
     settings = Settings(project_root=tmp_path)
     assert settings.inputs_dir == tmp_path / "inputs"
-    assert settings.resolve_grid_file() == tmp_path / "ARAB_GRIGLIA.geojson"
+    assert settings.resolve_grid_file() == tmp_path / "inputs" / "grids" / "ARAB_GRIGLIA.geojson"

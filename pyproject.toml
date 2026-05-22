@@ -11,7 +11,30 @@ requires-python = ">=3.11"
 authors = [
   { name = "Ladisa" }
 ]
-dependencies = []
+dependencies = [
+  "dask",
+  "distributed",
+  "geopandas",
+  "numpy",
+  "odc-stac",
+  "pandas",
+  "planetary-computer",
+  "pyogrio",
+  "pyproj",
+  "pystac-client",
+  "python-dateutil",
+  "rasterio",
+  "requests",
+  "rioxarray",
+  "shapely",
+  "tqdm",
+  "xarray",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest",
+]
 
 [project.scripts]
 msimne = "msimne.cli:main"

@@ -18,7 +18,7 @@ REGION_NAMES = {
     "R11": "Najran",
     "R12": "Al Bahah",
     "R13": "Al Jawf",
-    "R14": "PROVA",
+    "R14": "Region 14",
 }
 
 
@@ -84,5 +84,4 @@ class Settings:
         return preferred if preferred.exists() else legacy
 
     def resolve_grid_file(self) -> Path:
-        legacy = self.project_root / "ARAB_GRIGLIA.geojson"
-        return self.grid_file if self.grid_file.exists() else legacy
+        return self.grid_file
