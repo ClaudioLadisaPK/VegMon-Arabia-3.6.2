@@ -50,7 +50,7 @@ Questa e la procedura finale che ha funzionato davvero.
 Apri Ubuntu / WSL e vai nella cartella progetto:
 
 ```bash
-cd /mnt/c/Users/ladisa/Desktop/msimne
+cd /mnt/c/Users/*****/Desktop/msimne
 ```
 
 ### 2. Installa GDAL di sistema
