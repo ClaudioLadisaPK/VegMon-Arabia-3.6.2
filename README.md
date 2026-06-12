@@ -117,7 +117,7 @@ Se stampa `ok`, l'ambiente e pronto.
 Ogni volta che riapri WSL:
 
 ```bash
-cd /mnt/c/Users/ladisa/Desktop/msimne
+cd /mnt/c/Users/*****/Desktop/msimne
 source .venv_linux/bin/activate
 ```
 
@@ -196,7 +196,7 @@ La strada consigliata e:
 Esempio:
 
 ```bash
-cd /mnt/c/Users/ladisa/Desktop/msimne
+cd /mnt/c/Users/*****/Desktop/msimne
 source .venv_linux/bin/activate
 python 3.6.2.py --interactive
 ```
