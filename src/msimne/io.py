@@ -6,6 +6,7 @@ from pathlib import Path
 
 import numpy as np
 import rasterio
+import rioxarray  # noqa: F401 - registers the .rio accessor on xarray objects
 import xarray as xr
 
 from .config import Settings

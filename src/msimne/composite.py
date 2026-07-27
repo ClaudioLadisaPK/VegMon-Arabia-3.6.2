@@ -8,6 +8,7 @@ import geopandas as gpd
 import numpy as np
 import rasterio
 import rasterio.mask
+import rioxarray  # noqa: F401 - registers the .rio accessor on xarray objects
 import xarray as xr
 from rasterio.features import geometry_mask
 from rasterio.warp import Resampling
