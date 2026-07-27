@@ -26,6 +26,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--end", help="Data fine: YYYY-MM-DD o YYYY-MM")
     parser.add_argument("--month", help="Mese da elaborare: YYYY-MM")
     parser.add_argument("--previous-month", action="store_true", help="Elabora automaticamente il mese precedente")
+    parser.add_argument(
+        "--next-pending-month",
+        action="store_true",
+        help="Elabora il primo mese incompleto nella sequenza operativa",
+    )
+    parser.add_argument("--from-month", default="2026-03", help="Primo mese della sequenza operativa: YYYY-MM")
     parser.add_argument("--inputs-dir", type=Path, help="Cartella inputs; default <project-root>/inputs")
     parser.add_argument("--outputs-dir", type=Path, help="Cartella outputs; default <project-root>/outputs")
     parser.add_argument("--grid-file", type=Path, help="Override del file griglia")
@@ -70,7 +76,11 @@ def prompt_if_missing(args: argparse.Namespace) -> tuple[str, str, str]:
     return region, start, end
 
 
-def resolve_window(args: argparse.Namespace) -> tuple[datetime, datetime]:
+def resolve_window(args: argparse.Namespace, settings: Settings, regions: list[str]) -> tuple[datetime, datetime]:
+    if args.next_pending_month:
+        state = PipelineState(settings.state_dir / "pipeline.sqlite")
+        start = state.first_incomplete_month(parse_date(args.from_month), regions)
+        return start, start + relativedelta(months=1)
     if args.previous_month:
         return previous_month_window()
     if args.month:
@@ -78,7 +88,7 @@ def resolve_window(args: argparse.Namespace) -> tuple[datetime, datetime]:
         return start, start + relativedelta(months=1)
     if args.start and args.end:
         return parse_date(args.start), parse_date(args.end)
-    raise ValueError("Specifica --month, --previous-month oppure --start e --end.")
+    raise ValueError("Specifica --month, --previous-month, --next-pending-month oppure --start e --end.")
 
 
 def default_log_file(settings: Settings, start_dt: datetime, all_regions: bool, region: str | None) -> Path:
@@ -171,17 +181,18 @@ def main(argv: list[str] | None = None) -> int:
     )
     settings.ensure_directories()
 
-    if args.interactive or (not args.all_regions and not (args.month or args.previous_month or (args.start and args.end))):
+    has_window_arg = args.month or args.previous_month or args.next_pending_month or (args.start and args.end)
+    if args.interactive or (not args.all_regions and not has_window_arg):
         configure_logging(args.verbose, args.log_file)
         region, start, end = prompt_if_missing(args)
         start_dt = parse_date(start)
         end_dt = parse_date(end)
         regions = [region]
     else:
-        start_dt, end_dt = resolve_window(args)
         regions = list(PRODUCTION_REGIONS) if args.all_regions else [args.region] if args.region else []
         if not regions:
             parser.error("Specifica --region oppure --all-regions.")
+        start_dt, end_dt = resolve_window(args, settings, regions)
         configure_logging(args.verbose, args.log_file or default_log_file(settings, start_dt, args.all_regions, args.region))
 
     if end_dt <= start_dt:

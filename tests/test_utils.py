@@ -64,3 +64,24 @@ def test_pipeline_state_and_report(tmp_path: Path):
     report = tmp_path / "report.csv"
     write_region_report(records, report)
     assert "R01" in report.read_text(encoding="utf-8")
+
+
+def test_first_incomplete_month_sequence(tmp_path: Path):
+    state = PipelineState(tmp_path / "pipeline.sqlite")
+    run_id = state.create_run("2026-03")
+    for region in ("R01", "R02"):
+        state.upsert_region(
+            RegionRunRecord(
+                run_id=run_id,
+                month="2026-03",
+                region=region,
+                status="done",
+                started_at=utc_now_iso(),
+                finished_at=utc_now_iso(),
+                elapsed_seconds=1.0,
+            )
+        )
+
+    start = parse_date("2026-03")
+    assert state.first_incomplete_month(start, ["R01", "R02"]).strftime("%Y-%m") == "2026-04"
+    assert state.first_incomplete_month(start, ["R01", "R02", "R03"]).strftime("%Y-%m") == "2026-03"

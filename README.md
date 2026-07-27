@@ -75,15 +75,20 @@ python -c "import rasterio; import odc.stac; import dask; print('ok')"
 gdalinfo --version
 ```
 
-## Run mensile operativo
+## Run sequenziale operativo
 
-Il comando schedulabile elabora tutte le regioni operative `R01`-`R13` per il mese precedente:
+Il comando schedulabile elabora tutte le regioni operative `R01`-`R13` partendo da marzo 2026.
+Ad ogni esecuzione sceglie il primo mese non ancora completato nello stato SQLite:
 
 ```powershell
-python 3.6.2.py --previous-month --all-regions
+python 3.6.2.py --next-pending-month --from-month 2026-03 --all-regions
 ```
 
-Esempio per forzare un mese specifico:
+Quindi il primo run elabora `2026-03`. Se tutte le regioni `R01`-`R13` risultano completate,
+il run successivo passa a `2026-04`. Se una o piu regioni falliscono, il run successivo resta
+sullo stesso mese finche la copertura del mese non e completa.
+
+Esempio per forzare manualmente un mese specifico:
 
 ```powershell
 python 3.6.2.py --month 2026-06 --all-regions
@@ -109,7 +114,7 @@ Lo stack multispettrale non viene interpolato.
 La VM di riferimento ha 64 logical processors e circa 240 GB RAM. I default sono conservativi:
 
 ```powershell
-python 3.6.2.py --previous-month --all-regions --workers 16 --threads-per-worker 2 --memory-limit 12GB --gdal-threads 16 --gdal-warp-memory-mb 16384
+python 3.6.2.py --next-pending-month --from-month 2026-03 --all-regions --workers 16 --threads-per-worker 2 --memory-limit 12GB --gdal-threads 16 --gdal-warp-memory-mb 16384
 ```
 
 Non conviene usare sempre tutti i 64 thread, perche Dask, GDAL, compressione COG e I/O disco
@@ -117,15 +122,16 @@ possono saturarsi a vicenda.
 
 ## Scheduling Windows Task Scheduler
 
-Creare una task mensile il giorno 15, ad esempio alle 02:00, con:
+Creare una task con ripetizione ogni 31 giorni, con:
 
 ```text
 Program/script: C:\Path\To\Miniforge3\envs\msimne\python.exe
-Arguments: 3.6.2.py --previous-month --all-regions
+Arguments: 3.6.2.py --next-pending-month --from-month 2026-03 --all-regions
 Start in: C:\Path\To\VegMon-Arabia-3.6.2
 ```
 
-Il processo del 15 elabora solo il mese precedente e non recupera automaticamente mesi arretrati.
+La cadenza operativa e: un mese di dati per run, massimo 31 giorni per completare tutte le regioni,
+poi avanzamento al mese successivo alla prossima esecuzione schedulata.
 
 ## Setup ambiente alternativo in WSL
 

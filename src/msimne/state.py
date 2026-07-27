@@ -7,6 +7,11 @@ from dataclasses import asdict, dataclass, fields
 from datetime import datetime, timezone
 from pathlib import Path
 
+from dateutil.relativedelta import relativedelta
+
+
+SUCCESS_STATUSES = {"done", "done_with_interpolation"}
+
 
 def utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -145,6 +150,35 @@ class PipelineState:
                 (run_id,),
             ).fetchall()
         return [RegionRunRecord(**dict(row)) for row in rows]
+
+    def successful_regions_for_month(self, month: str) -> set[str]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT DISTINCT region
+                FROM region_runs
+                WHERE month = ? AND status IN (?, ?)
+                """,
+                (month, *sorted(SUCCESS_STATUSES)),
+            ).fetchall()
+        return {row[0] for row in rows}
+
+    def month_completed(self, month: str, regions: list[str] | tuple[str, ...]) -> bool:
+        return set(regions).issubset(self.successful_regions_for_month(month))
+
+    def first_incomplete_month(
+        self,
+        start_month,
+        regions: list[str] | tuple[str, ...],
+        max_months: int = 240,
+    ):
+        current = start_month.replace(day=1)
+        for _ in range(max_months):
+            month = f"{current:%Y-%m}"
+            if not self.month_completed(month, regions):
+                return current
+            current = current + relativedelta(months=1)
+        raise RuntimeError(f"Nessun mese incompleto trovato entro {max_months} mesi da {start_month:%Y-%m}")
 
 
 def write_region_report(records: list[RegionRunRecord], path: Path) -> None:
