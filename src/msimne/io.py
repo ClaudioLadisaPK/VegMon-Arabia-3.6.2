@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+import sys
 from pathlib import Path
 
 import numpy as np
@@ -13,6 +14,25 @@ from .config import Settings
 
 
 def set_gdal_env() -> None:
+    conda_prefix = Path(sys.prefix)
+    candidate_path_dirs = [
+        conda_prefix,
+        conda_prefix / "Scripts",
+        conda_prefix / "Library" / "bin",
+        conda_prefix / "bin",
+    ]
+    existing_path_dirs = [str(path) for path in candidate_path_dirs if path.exists()]
+    if existing_path_dirs:
+        current_path = os.environ.get("PATH", "")
+        os.environ["PATH"] = os.pathsep.join(existing_path_dirs + [current_path])
+
+    gdal_data = conda_prefix / "Library" / "share" / "gdal"
+    proj_lib = conda_prefix / "Library" / "share" / "proj"
+    if gdal_data.exists():
+        os.environ.setdefault("GDAL_DATA", str(gdal_data))
+    if proj_lib.exists():
+        os.environ.setdefault("PROJ_LIB", str(proj_lib))
+
     os.environ.setdefault("GDAL_DISABLE_READDIR_ON_OPEN", "EMPTY_DIR")
     os.environ.setdefault("GDAL_HTTP_MAX_RETRY", "5")
     os.environ.setdefault("GDAL_HTTP_RETRY_DELAY", "1")

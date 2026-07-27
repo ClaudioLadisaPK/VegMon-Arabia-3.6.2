@@ -133,6 +133,22 @@ Start in: C:\Path\To\VegMon-Arabia-3.6.2
 La cadenza operativa e: un mese di dati per run, massimo 31 giorni per completare tutte le regioni,
 poi avanzamento al mese successivo alla prossima esecuzione schedulata.
 
+Script PowerShell consigliato per Task Scheduler:
+
+```powershell
+Set-Location "C:\VegMon-Arabia-3.6.2_new"
+
+& "C:\ProgramData\anaconda3\envs\msimne\python.exe" "C:\VegMon-Arabia-3.6.2_new\3.6.2.py" `
+  --next-pending-month `
+  --from-month 2026-03 `
+  --all-regions `
+  --workers 16 `
+  --threads-per-worker 2 `
+  --memory-limit 12GB `
+  --gdal-threads 16 `
+  --gdal-warp-memory-mb 16384
+```
+
 ## Setup ambiente alternativo in WSL
 
 ## Setup ambiente finale funzionante in WSL
