@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 import datetime as dt
+import logging
 import time
 from functools import wraps
 
 from dateutil.relativedelta import relativedelta
 
+LOGGER = logging.getLogger(__name__)
 
-VALID_CODES = {f"R{i:02d}" for i in range(1, 15)}
+VALID_CODES = {f"R{i:02d}" for i in range(1, 14)}
 
 
 def parse_date(value: str) -> dt.datetime:
@@ -39,6 +41,13 @@ def get_utm_crs_from_lat_lon(lat: float, lon: float) -> str:
     return f"EPSG:{epsg}"
 
 
+def previous_month_window(today: dt.date | None = None) -> tuple[dt.datetime, dt.datetime]:
+    today = today or dt.date.today()
+    first_this_month = dt.datetime(today.year, today.month, 1)
+    first_previous_month = first_this_month - relativedelta(months=1)
+    return first_previous_month, first_this_month
+
+
 def get_tile_id(geom) -> str:
     x_min, y_min, _, _ = geom.bounds
     lat = y_min + 0.2
@@ -61,6 +70,15 @@ def retry(times: int, delay_seconds: int):
                     return func(*args, **kwargs)
                 except Exception as exc:  # pragma: no cover
                     last_err = exc
+                    if attempt >= times - 1:
+                        break
+                    LOGGER.warning(
+                        "Tentativo %s/%s fallito in %s: %s",
+                        attempt + 1,
+                        times,
+                        func.__name__,
+                        exc,
+                    )
                     wait = delay_seconds * (2 ** attempt) + random.uniform(0, 1.5)
                     time.sleep(wait)
             if last_err:

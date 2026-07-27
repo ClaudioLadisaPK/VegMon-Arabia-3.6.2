@@ -11,9 +11,10 @@ import rasterio.mask
 import xarray as xr
 from rasterio.features import geometry_mask
 from rasterio.warp import Resampling
+from pystac_client import Client as StacClient
 
 from .config import Settings
-from .io import convert_to_cog, save_stack_int16, set_scale_offset
+from .io import save_stack_int16, set_scale_offset
 from .stac import load_s2_median, open_catalog
 from .utils import get_tile_id, retry
 
@@ -56,7 +57,6 @@ def validate_raster_coverage(path: Path, nodata_val: int, min_valid_ratio: float
 
 def build_tile_products(med: xr.Dataset, paths: TilePaths, settings: Settings, crs_to_use, crs_str: str) -> None:
     save_stack_int16(med, ["B04", "B03", "B02", "B08"], paths.stack, nodata=settings.ndvi_nodata, crs=crs_to_use)
-    convert_to_cog(paths.stack, settings, nodata=settings.ndvi_nodata, dtype="Int16", crs=crs_str)
 
     red = med["B04"].astype("float32")
     nir = med["B08"].astype("float32")
@@ -74,7 +74,6 @@ def build_tile_products(med: xr.Dataset, paths: TilePaths, settings: Settings, c
     ndvi_q.rio.write_crs(crs_to_use, inplace=True)
     ndvi_q.rio.to_raster(paths.ndvi, compress="DEFLATE", predictor=2, dtype="int16")
     set_scale_offset(paths.ndvi, scale=1 / 10000.0, offset=0.0)
-    convert_to_cog(paths.ndvi, settings, nodata=settings.ndvi_nodata, dtype="Int16", crs=crs_str)
 
     veg = xr.where(np.isfinite(ndvi), xr.where(ndvi >= settings.ndvi_threshold, 1, 0), settings.ndvi_nodata).astype(
         np.int16
@@ -82,11 +81,18 @@ def build_tile_products(med: xr.Dataset, paths: TilePaths, settings: Settings, c
     veg.rio.write_nodata(settings.ndvi_nodata, encoded=True, inplace=True)
     veg.rio.write_crs(crs_to_use, inplace=True)
     veg.rio.to_raster(paths.binary, compress="DEFLATE", predictor=2, dtype="int16")
-    convert_to_cog(paths.binary, settings, nodata=settings.ndvi_nodata, dtype="Int16", crs=crs_str)
 
 
 @retry(6, 30)
-def compute_sentinel2_composite(geom, tile_id: str, start, end, settings: Settings, use_scl: bool = True) -> None:
+def compute_sentinel2_composite(
+    geom,
+    tile_id: str,
+    start,
+    end,
+    settings: Settings,
+    use_scl: bool = True,
+    catalog: StacClient | None = None,
+) -> None:
     base = f"{start:%Y%m%d}_{end:%Y%m%d}"
     paths = build_tile_paths(settings, tile_id, base)
     if all(path.exists() for path in (paths.stack, paths.ndvi, paths.binary)) and use_scl:
@@ -95,7 +101,7 @@ def compute_sentinel2_composite(geom, tile_id: str, start, end, settings: Settin
 
     rng = (start.isoformat(), end.isoformat())
     geom_wgs84 = gpd.GeoSeries([geom], crs=settings.final_mosaic_crs).to_crs("EPSG:4326").iloc[0]
-    catalog = open_catalog(settings)
+    catalog = catalog or open_catalog(settings)
     med = load_s2_median(catalog, settings, geom_wgs84, rng, settings.final_mosaic_crs, use_scl=use_scl)
     if med is None:
         LOGGER.warning("Nessun dataset valido per %s %s", tile_id, base)
@@ -116,7 +122,7 @@ def compute_sentinel2_composite(geom, tile_id: str, start, end, settings: Settin
         for path in (paths.stack, paths.ndvi, paths.binary):
             if path.exists():
                 path.unlink()
-        compute_sentinel2_composite(geom, tile_id, start, end, settings, use_scl=False)
+        compute_sentinel2_composite(geom, tile_id, start, end, settings, use_scl=False, catalog=catalog)
 
 
 def tile_coverage_in_aoi(ndvi_fp: Path, tile_geom, aoi_union, nodata_val: int) -> float:
@@ -134,7 +140,14 @@ def tile_coverage_in_aoi(ndvi_fp: Path, tile_geom, aoi_union, nodata_val: int) -
     return float(valid.sum()) / float(total)
 
 
-def ensure_full_grid_coverage(tiles_gdf: gpd.GeoDataFrame, aoi: gpd.GeoDataFrame, wstart, wend, settings: Settings) -> None:
+def ensure_full_grid_coverage(
+    tiles_gdf: gpd.GeoDataFrame,
+    aoi: gpd.GeoDataFrame,
+    wstart,
+    wend,
+    settings: Settings,
+    catalog: StacClient | None = None,
+) -> None:
     base = f"{wstart:%Y%m%d}_{wend:%Y%m%d}"
     aoi_union = aoi.geometry.unary_union
     for loop_idx in range(1, settings.max_coverage_loops + 1):
@@ -153,4 +166,4 @@ def ensure_full_grid_coverage(tiles_gdf: gpd.GeoDataFrame, aoi: gpd.GeoDataFrame
             return
         for tid, geom, ratio in missing:
             LOGGER.info("Ricalcolo %s senza SCL (copertura %.2f%%)", tid, ratio * 100)
-            compute_sentinel2_composite(geom, tid, wstart.date(), wend.date(), settings, use_scl=False)
+            compute_sentinel2_composite(geom, tid, wstart.date(), wend.date(), settings, use_scl=False, catalog=catalog)

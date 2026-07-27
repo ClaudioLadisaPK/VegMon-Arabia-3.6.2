@@ -21,6 +21,8 @@ REGION_NAMES = {
     "R14": "Region 14",
 }
 
+PRODUCTION_REGIONS = tuple(f"R{i:02d}" for i in range(1, 14))
+
 
 @dataclass(slots=True)
 class Settings:
@@ -38,6 +40,9 @@ class Settings:
     stack_dir: Path = field(init=False)
     ndvi_dir: Path = field(init=False)
     stats_dir: Path = field(init=False)
+    logs_dir: Path = field(init=False)
+    state_dir: Path = field(init=False)
+    reports_dir: Path = field(init=False)
     ndvi_nodata: int = -32768
     gdal_timeout: int = 1800
     stac_url: str = "https://planetarycomputer.microsoft.com/api/stac/v1"
@@ -45,10 +50,17 @@ class Settings:
     max_items: int = 20
     min_valid_ratio: float = 0.95
     coverage_threshold: float = 0.99
+    final_ndvi_valid_ratio: float = 0.99
     max_coverage_loops: int = 5
     cloud_cover_lt: int = 80
     ndvi_threshold: float = 0.2
     valid_scl_classes: tuple[int, ...] = (2, 4, 5, 6, 7)
+    dask_workers: int = 16
+    dask_threads_per_worker: int = 2
+    dask_memory_limit: str = "12GB"
+    gdal_threads: str = "16"
+    gdal_warp_memory_mb: int = 16384
+    gap_fill_max_search_distance: float = 0.0
 
     def __post_init__(self) -> None:
         self.inputs_dir = (self.inputs_dir_override or (self.project_root / "inputs")).resolve()
@@ -64,6 +76,9 @@ class Settings:
         self.stack_dir = self.outputs_dir / "S2" / "STACK"
         self.ndvi_dir = self.outputs_dir / "S2" / "NDVI"
         self.stats_dir = self.outputs_dir / "S2" / "STATS"
+        self.logs_dir = self.outputs_dir / "logs"
+        self.state_dir = self.outputs_dir / "state"
+        self.reports_dir = self.outputs_dir / "reports"
 
     def ensure_directories(self) -> None:
         for path in (
@@ -75,6 +90,9 @@ class Settings:
             self.stack_dir,
             self.ndvi_dir,
             self.stats_dir,
+            self.logs_dir,
+            self.state_dir,
+            self.reports_dir,
         ):
             path.mkdir(parents=True, exist_ok=True)
 

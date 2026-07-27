@@ -17,6 +17,7 @@ def set_gdal_env() -> None:
     os.environ.setdefault("GDAL_HTTP_RETRY_DELAY", "1")
     os.environ.setdefault("CPL_VSIL_CURL_NON_CACHED", "1")
     os.environ.setdefault("CPL_VSIL_CURL_CACHE_SIZE", "67108864")
+    os.environ.setdefault("GDAL_CACHEMAX", "32768")
 
 
 def set_scale_offset(path: Path, scale: float, offset: float = 0.0) -> None:
@@ -50,7 +51,7 @@ def convert_to_cog(path: Path, settings: Settings, nodata: int, dtype: str = "In
         "-co",
         "PREDICTOR=2",
         "-co",
-        "NUM_THREADS=ALL_CPUS",
+        f"NUM_THREADS={settings.gdal_threads}",
         "-a_nodata",
         str(nodata),
     ]

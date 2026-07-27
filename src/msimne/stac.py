@@ -16,7 +16,7 @@ LOGGER = logging.getLogger(__name__)
 
 
 def open_catalog(settings: Settings) -> StacClient:
-    return StacClient.open(settings.stac_url, modifier=planetary_computer.sign_inplace)
+    return StacClient.open(settings.stac_url)
 
 
 def compute_valid_ratio(mask_bool: xr.DataArray) -> float:

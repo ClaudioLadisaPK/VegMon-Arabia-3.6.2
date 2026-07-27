@@ -12,11 +12,10 @@ Processore Sentinel-2 per:
 
 Il progetto e stato rifattorizzato a partire da `3.6.2.py` in una struttura piu adatta a manutenzione e pubblicazione su GitHub.
 
-## Stato consigliato
+## Stato operativo
 
-L'esecuzione consigliata e `WSL / Linux`.
-
-Su Windows nativo abbiamo avuto problemi reali con `rasterio + GDAL` e dipendenze DLL. Il codice ora funziona bene in WSL con ambiente Python Linux dedicato.
+Il target operativo e una VM Windows con input/output locali. Per evitare problemi di DLL con
+`GDAL` e `rasterio`, l'ambiente consigliato e `conda-forge` tramite Miniforge o Mambaforge.
 
 ## Struttura del progetto
 
@@ -27,19 +26,108 @@ Su Windows nativo abbiamo avuto problemi reali con `rasterio + GDAL` e dipendenz
 - `src/msimne/composite.py`: generazione tile, NDVI, controllo copertura
 - `src/msimne/mosaic.py`: mosaici finali con GDAL
 - `src/msimne/stats.py`: statistiche finali NDVI
+- `src/msimne/quality.py`: controllo copertura NDVI e gap filling finale
+- `src/msimne/state.py`: stato persistente SQLite e report run
 - `src/msimne/pipeline.py`: orchestrazione end-to-end
 - `inputs/regions`: AOI regionali `R01.geojson` ... `R14.geojson`
 - `inputs/grids`: griglia di lavoro
 - `outputs/`: risultati generati dal refactor
 - `tests/`: test automatici minimi
 
-## Prerequisiti
+## Prerequisiti Windows VM
 
 Serve:
 
-- WSL con Ubuntu o altra distro Linux
-- Python 3
-- accesso `sudo` per installare i pacchetti di sistema GDAL
+- Windows Server/Windows VM
+- Miniforge o Mambaforge
+- Git
+- input in `inputs/regions` e `inputs/grids`
+- output locali sulla VM
+
+Verifica risorse:
+
+```powershell
+Get-CimInstance Win32_ComputerSystem | Select-Object NumberOfLogicalProcessors,TotalPhysicalMemory
+```
+
+Verifica eventuale subscription key Planetary Computer:
+
+```powershell
+echo $env:PC_SDK_SUBSCRIPTION_KEY
+```
+
+La pipeline funziona anche senza key, ma usa retry e logging conservativi.
+
+## Setup ambiente Windows consigliato
+
+Da PowerShell/Miniforge Prompt:
+
+```powershell
+conda env create -f environment.yml
+conda activate msimne
+pip install -e .
+```
+
+Verifica:
+
+```powershell
+python -c "import rasterio; import odc.stac; import dask; print('ok')"
+gdalinfo --version
+```
+
+## Run mensile operativo
+
+Il comando schedulabile elabora tutte le regioni operative `R01`-`R13` per il mese precedente:
+
+```powershell
+python 3.6.2.py --previous-month --all-regions
+```
+
+Esempio per forzare un mese specifico:
+
+```powershell
+python 3.6.2.py --month 2026-06 --all-regions
+```
+
+Se una regione fallisce, il processo continua con le successive. Il run produce:
+
+- log leggibile in `outputs/logs`
+- stato SQLite in `outputs/state/pipeline.sqlite`
+- report CSV in `outputs/reports`
+
+Gli output finali restano COG e mantengono il naming originale:
+
+- `outputs/S2/STACK/S2_stack_RXX_YYYY-MM.tif`
+- `outputs/S2/NDVI/S2_ndvi_RXX_YYYY-MM.tif`
+- `outputs/S2/STATS/S2_stats_RXX_YYYY-MM.csv`
+
+Il file NDVI finale viene validato e, se necessario, interpolato direttamente nello stesso file.
+Lo stack multispettrale non viene interpolato.
+
+### Parametri performance VM
+
+La VM di riferimento ha 64 logical processors e circa 240 GB RAM. I default sono conservativi:
+
+```powershell
+python 3.6.2.py --previous-month --all-regions --workers 16 --threads-per-worker 2 --memory-limit 12GB --gdal-threads 16 --gdal-warp-memory-mb 16384
+```
+
+Non conviene usare sempre tutti i 64 thread, perche Dask, GDAL, compressione COG e I/O disco
+possono saturarsi a vicenda.
+
+## Scheduling Windows Task Scheduler
+
+Creare una task mensile il giorno 15, ad esempio alle 02:00, con:
+
+```text
+Program/script: C:\Path\To\Miniforge3\envs\msimne\python.exe
+Arguments: 3.6.2.py --previous-month --all-regions
+Start in: C:\Path\To\VegMon-Arabia-3.6.2
+```
+
+Il processo del 15 elabora solo il mese precedente e non recupera automaticamente mesi arretrati.
+
+## Setup ambiente alternativo in WSL
 
 ## Setup ambiente finale funzionante in WSL
 

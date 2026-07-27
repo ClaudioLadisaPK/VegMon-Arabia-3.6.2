@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import logging
 import shutil
+from dataclasses import dataclass
 from glob import glob
-from multiprocessing import cpu_count
 
 import dask
 import geopandas as gpd
@@ -17,10 +17,22 @@ except Exception:  # pragma: no cover
 from .composite import compute_sentinel2_composite, ensure_full_grid_coverage
 from .config import REGION_NAMES, Settings
 from .mosaic import mosaic_export
+from .quality import NdviQuality, validate_and_fill_ndvi
+from .stac import open_catalog
 from .stats import classify_stats
 from .utils import VALID_CODES, get_tile_id, monthly_windows
 
 LOGGER = logging.getLogger(__name__)
+
+
+@dataclass(slots=True)
+class WindowResult:
+    region: str
+    suffix: str
+    ndvi_output: str
+    stack_output: str
+    stats_output: str
+    quality: NdviQuality
 
 
 def _progress(iterable, total: int | None = None, desc: str = ""):
@@ -42,13 +54,23 @@ def load_aoi_and_grid(settings: Settings, code: str):
 
 
 def month_outputs_exist(settings: Settings, code: str, wstart, wend, same_month: bool) -> bool:
-    suffix = f"{code}_{wstart:%Y-%m-%d}_{wend:%Y-%m-%d}" if same_month else f"{code}_{wstart:%Y-%m}"
-    ndvi_mosaic = settings.ndvi_dir / f"S2_ndvi_{suffix}.tif"
-    stack_mosaic = settings.stack_dir / f"S2_stack_{suffix}.tif"
+    ndvi_mosaic, stack_mosaic, _ = output_paths(settings, code, wstart, wend, same_month)
     return ndvi_mosaic.exists() and stack_mosaic.exists()
 
 
-def run_pipeline(settings: Settings, code: str, start_dt, end_dt) -> None:
+def output_suffix(code: str, wstart, wend, same_month: bool) -> str:
+    return f"{code}_{wstart:%Y-%m-%d}_{wend:%Y-%m-%d}" if same_month else f"{code}_{wstart:%Y-%m}"
+
+
+def output_paths(settings: Settings, code: str, wstart, wend, same_month: bool):
+    suffix = output_suffix(code, wstart, wend, same_month)
+    ndvi_mosaic = settings.ndvi_dir / f"S2_ndvi_{suffix}.tif"
+    stack_mosaic = settings.stack_dir / f"S2_stack_{suffix}.tif"
+    stats_csv = settings.stats_dir / f"S2_stats_{suffix}.csv"
+    return ndvi_mosaic, stack_mosaic, stats_csv
+
+
+def run_pipeline(settings: Settings, code: str, start_dt, end_dt) -> list[WindowResult]:
     if code not in VALID_CODES:
         raise ValueError(f"Codice '{code}' non valido. Usa uno tra: {', '.join(sorted(VALID_CODES))}")
 
@@ -62,7 +84,12 @@ def run_pipeline(settings: Settings, code: str, start_dt, end_dt) -> None:
     tiles = gpd.sjoin(grid, aoi_buff, how="inner", predicate="intersects").drop(columns=["index_right"])
     LOGGER.info("Tile count %s", len(tiles))
 
-    client = Client(processes=True, n_workers=cpu_count(), threads_per_worker=1, memory_limit="auto")
+    client = Client(
+        processes=True,
+        n_workers=settings.dask_workers,
+        threads_per_worker=settings.dask_threads_per_worker,
+        memory_limit=settings.dask_memory_limit,
+    )
     dask.config.set(
         {
             "distributed.worker.memory.target": 0.85,
@@ -71,36 +98,60 @@ def run_pipeline(settings: Settings, code: str, start_dt, end_dt) -> None:
         }
     )
     odc.stac.configure_rio(cloud_defaults=True, client=client)
+    catalog = open_catalog(settings)
+    results: list[WindowResult] = []
 
     try:
         for widx, (wstart, wend) in _progress(list(enumerate(windows, start=1)), total=len(windows), desc="Finestre"):
             if month_outputs_exist(settings, code, wstart, wend, same_month):
                 LOGGER.info("Output gia presenti per finestra %s/%s", widx, len(windows))
+                results.append(validate_existing_window(settings, aoi, code, wstart, wend, same_month))
                 continue
             LOGGER.info("Finestra %s/%s %s -> %s", widx, len(windows), wstart.date(), wend.date())
             for idx, tile in _progress(list(tiles.iterrows()), total=len(tiles), desc=f"Tile {wstart:%Y-%m}"):
                 tid = get_tile_id(tile.geometry)
                 LOGGER.info("Tile %s (%s/%s)", tid, idx + 1, len(tiles))
-                compute_sentinel2_composite(tile.geometry, tid, wstart.date(), wend.date(), settings, use_scl=True)
-            ensure_full_grid_coverage(tiles, aoi, wstart, wend, settings)
+                compute_sentinel2_composite(
+                    tile.geometry,
+                    tid,
+                    wstart.date(),
+                    wend.date(),
+                    settings,
+                    use_scl=True,
+                    catalog=catalog,
+                )
+            ensure_full_grid_coverage(tiles, aoi, wstart, wend, settings, catalog=catalog)
+            results.append(build_outputs_for_window(settings, aoi, code, wstart, wend, same_month))
     finally:
         client.close()
 
-    if same_month:
-        build_outputs_for_window(settings, aoi, code, windows[0][0], windows[0][1], same_month=True)
-    else:
-        for wstart, wend in windows:
-            build_outputs_for_window(settings, aoi, code, wstart, wend, same_month=False)
-
     cleanup_workdir(settings)
+    return results
 
 
-def build_outputs_for_window(settings: Settings, aoi, code: str, wstart, wend, same_month: bool) -> None:
-    suffix = f"{code}_{wstart:%Y-%m-%d}_{wend:%Y-%m-%d}" if same_month else f"{code}_{wstart:%Y-%m}"
+def validate_existing_window(settings: Settings, aoi, code: str, wstart, wend, same_month: bool) -> WindowResult:
+    suffix = output_suffix(code, wstart, wend, same_month)
+    ndvi_fp, stack_fp, stats_fp = output_paths(settings, code, wstart, wend, same_month)
+    quality = validate_and_fill_ndvi(ndvi_fp, aoi, settings)
+    if not quality.passed:
+        raise ValueError(f"Copertura NDVI sotto soglia per {suffix}: {quality.valid_ratio_after:.2%}")
+    if not stats_fp.exists():
+        classify_stats(aoi, ndvi_fp.name, settings, out_csv_name=stats_fp.name)
+    return WindowResult(
+        region=code,
+        suffix=suffix,
+        ndvi_output=str(ndvi_fp),
+        stack_output=str(stack_fp),
+        stats_output=str(stats_fp),
+        quality=quality,
+    )
+
+
+def build_outputs_for_window(settings: Settings, aoi, code: str, wstart, wend, same_month: bool) -> WindowResult:
+    suffix = output_suffix(code, wstart, wend, same_month)
     base = f"{wstart:%Y%m%d}_{wend:%Y%m%d}"
     if len(glob(str(settings.work_dir / f"*/ndvi_{base}.tif"))) == 0:
-        LOGGER.warning("Nessuna composite per %s", suffix)
-        return
+        raise ValueError(f"Nessuna composite per {suffix}")
 
     stack_name = f"S2_stack_{suffix}.tif"
     ndvi_name = f"S2_ndvi_{suffix}.tif"
@@ -115,8 +166,24 @@ def build_outputs_for_window(settings: Settings, aoi, code: str, wstart, wend, s
         aoi=aoi,
         scale_forced=1 / 10000.0,
     )
-    if (settings.ndvi_dir / ndvi_name).exists() and (settings.stack_dir / stack_name).exists():
-        classify_stats(aoi, ndvi_name, settings, out_csv_name=stats_name)
+    ndvi_fp = settings.ndvi_dir / ndvi_name
+    stack_fp = settings.stack_dir / stack_name
+    stats_fp = settings.stats_dir / stats_name
+    if not ndvi_fp.exists() or not stack_fp.exists():
+        raise ValueError(f"Output incompleti per {suffix}")
+
+    quality = validate_and_fill_ndvi(ndvi_fp, aoi, settings)
+    if not quality.passed:
+        raise ValueError(f"Copertura NDVI sotto soglia per {suffix}: {quality.valid_ratio_after:.2%}")
+    classify_stats(aoi, ndvi_name, settings, out_csv_name=stats_name)
+    return WindowResult(
+        region=code,
+        suffix=suffix,
+        ndvi_output=str(ndvi_fp),
+        stack_output=str(stack_fp),
+        stats_output=str(stats_fp),
+        quality=quality,
+    )
 
 
 def cleanup_workdir(settings: Settings) -> None:
