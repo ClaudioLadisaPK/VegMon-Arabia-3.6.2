@@ -153,18 +153,25 @@ def ensure_full_grid_coverage(
     aoi_union = aoi.geometry.unary_union
     for loop_idx in range(1, settings.max_coverage_loops + 1):
         missing = []
+        low_coverage = []
         for _, tile in tiles_gdf.iterrows():
             tid = get_tile_id(tile.geometry)
             ndvi_fp = settings.work_dir / tid / f"ndvi_{base}.tif"
-            ratio = 0.0 if not ndvi_fp.exists() else tile_coverage_in_aoi(ndvi_fp, tile.geometry, aoi_union, settings.ndvi_nodata)
+            if not ndvi_fp.exists():
+                missing.append((tid, tile.geometry, 0.0))
+                continue
+            ratio = tile_coverage_in_aoi(ndvi_fp, tile.geometry, aoi_union, settings.ndvi_nodata)
             if ratio < settings.coverage_threshold:
-                missing.append((tid, tile.geometry, ratio))
+                low_coverage.append((tid, ratio))
+        if low_coverage:
+            for tid, ratio in low_coverage:
+                LOGGER.warning("Tile %s sotto soglia copertura: %.2f%%", tid, ratio * 100)
         if not missing:
             return
         if loop_idx == settings.max_coverage_loops:
             for tid, _, ratio in missing:
-                LOGGER.warning("Tile %s sotto soglia copertura: %.2f%%", tid, ratio * 100)
+                LOGGER.warning("Tile %s mancante dopo retry copertura: %.2f%%", tid, ratio * 100)
             return
         for tid, geom, ratio in missing:
-            LOGGER.info("Ricalcolo %s senza SCL (copertura %.2f%%)", tid, ratio * 100)
+            LOGGER.info("Ricalcolo tile mancante %s senza SCL (copertura %.2f%%)", tid, ratio * 100)
             compute_sentinel2_composite(geom, tid, wstart.date(), wend.date(), settings, use_scl=False, catalog=catalog)
