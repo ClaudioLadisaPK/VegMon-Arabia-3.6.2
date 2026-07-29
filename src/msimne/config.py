@@ -44,7 +44,7 @@ class Settings:
     state_dir: Path = field(init=False)
     reports_dir: Path = field(init=False)
     ndvi_nodata: int = -32768
-    gdal_timeout: int = 1800
+    gdal_timeout: int = 14400
     stac_url: str = "https://planetarycomputer.microsoft.com/api/stac/v1"
     resolution: int = 10
     max_items: int = 20

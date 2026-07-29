@@ -131,7 +131,12 @@ def mosaic_export(
 
 
 def run_gdal(command: list[str], settings: Settings) -> None:
-    result = subprocess.run(command, capture_output=True, text=True, timeout=settings.gdal_timeout)
+    try:
+        result = subprocess.run(command, capture_output=True, text=True, timeout=settings.gdal_timeout)
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError(
+            f"Command timed out after {settings.gdal_timeout} seconds: {' '.join(command)}"
+        ) from exc
     if result.returncode == 0:
         return
 

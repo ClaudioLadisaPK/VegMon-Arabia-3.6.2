@@ -40,6 +40,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--memory-limit", default="12GB", help="Limite memoria per worker Dask")
     parser.add_argument("--gdal-threads", default="16", help="Thread GDAL per warp/COG")
     parser.add_argument("--gdal-warp-memory-mb", type=int, default=16384, help="Memoria gdalwarp in MB")
+    parser.add_argument("--gdal-timeout", type=int, default=14400, help="Timeout comandi GDAL in secondi")
     parser.add_argument("--log-file", type=Path, help="File log esplicito")
     parser.add_argument("--interactive", action="store_true", help="Richiede regione e date in modo interattivo")
     parser.add_argument("--verbose", action="store_true", help="Abilita logging verboso")
@@ -178,6 +179,7 @@ def main(argv: list[str] | None = None) -> int:
         dask_memory_limit=args.memory_limit,
         gdal_threads=args.gdal_threads,
         gdal_warp_memory_mb=args.gdal_warp_memory_mb,
+        gdal_timeout=args.gdal_timeout,
     )
     settings.ensure_directories()
 
