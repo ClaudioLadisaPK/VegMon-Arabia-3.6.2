@@ -4,6 +4,7 @@ import os
 import subprocess
 from glob import glob
 from pathlib import Path
+from typing import Iterable
 
 import geopandas as gpd
 
@@ -20,9 +21,10 @@ def mosaic_export(
     nodata: int | None = None,
     aoi: gpd.GeoDataFrame | None = None,
     scale_forced: float | None = None,
+    source_files: Iterable[Path] | None = None,
 ) -> None:
     nodata = settings.ndvi_nodata if nodata is None else nodata
-    files = glob(str(settings.work_dir / pattern))
+    files = [str(path) for path in source_files] if source_files is not None else glob(str(settings.work_dir / pattern))
     if not files:
         return
 
@@ -37,7 +39,7 @@ def mosaic_export(
         for fp in files:
             stream.write(Path(fp).resolve().as_posix() + "\n")
 
-    subprocess.run(
+    run_gdal(
         [
             "gdalbuildvrt",
             "-input_file_list",
@@ -49,8 +51,7 @@ def mosaic_export(
             "-allow_projection_difference",
             vrt_fp.as_posix(),
         ],
-        check=True,
-        timeout=settings.gdal_timeout,
+        settings,
     )
 
     warp_cmd = [
@@ -94,12 +95,12 @@ def mosaic_export(
         warp_cmd += ["-cutline", temp_aoi.as_posix(), "-cl", "aoi", "-crop_to_cutline"]
 
     warp_cmd += [vrt_fp.as_posix(), tmp_fp.as_posix()]
-    subprocess.run(warp_cmd, check=True, timeout=settings.gdal_timeout)
+    run_gdal(warp_cmd, settings)
 
     if scale_forced is not None:
         set_scale_offset(tmp_fp, scale=scale_forced, offset=0.0)
 
-    subprocess.run(
+    run_gdal(
         [
             "gdal_translate",
             "-of",
@@ -119,8 +120,7 @@ def mosaic_export(
             tmp_fp.as_posix(),
             out_fp.as_posix(),
         ],
-        check=True,
-        timeout=settings.gdal_timeout,
+        settings,
     )
 
     for path in (list_fp, vrt_fp, tmp_fp):
@@ -128,3 +128,20 @@ def mosaic_export(
             os.remove(path)
     if temp_aoi and temp_aoi.exists():
         os.remove(temp_aoi)
+
+
+def run_gdal(command: list[str], settings: Settings) -> None:
+    result = subprocess.run(command, capture_output=True, text=True, timeout=settings.gdal_timeout)
+    if result.returncode == 0:
+        return
+
+    details = "\n".join(
+        part.strip()
+        for part in (
+            f"Command: {' '.join(command)}",
+            f"stdout:\n{result.stdout}" if result.stdout else "",
+            f"stderr:\n{result.stderr}" if result.stderr else "",
+        )
+        if part.strip()
+    )
+    raise RuntimeError(details)

@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import shutil
 from dataclasses import dataclass
-from glob import glob
+from pathlib import Path
 
 import dask
 import geopandas as gpd
@@ -108,9 +108,10 @@ def run_pipeline(settings: Settings, code: str, start_dt, end_dt) -> list[Window
                 results.append(validate_existing_window(settings, aoi, code, wstart, wend, same_month))
                 continue
             LOGGER.info("Finestra %s/%s %s -> %s", widx, len(windows), wstart.date(), wend.date())
-            for idx, tile in _progress(list(tiles.iterrows()), total=len(tiles), desc=f"Tile {wstart:%Y-%m}"):
+            tile_rows = _progress(list(tiles.iterrows()), total=len(tiles), desc=f"Tile {wstart:%Y-%m}")
+            for pos, (_, tile) in enumerate(tile_rows, start=1):
                 tid = get_tile_id(tile.geometry)
-                LOGGER.info("Tile %s (%s/%s)", tid, idx + 1, len(tiles))
+                LOGGER.info("Tile %s (%s/%s)", tid, pos, len(tiles))
                 compute_sentinel2_composite(
                     tile.geometry,
                     tid,
@@ -121,7 +122,7 @@ def run_pipeline(settings: Settings, code: str, start_dt, end_dt) -> list[Window
                     catalog=catalog,
                 )
             ensure_full_grid_coverage(tiles, aoi, wstart, wend, settings, catalog=catalog)
-            results.append(build_outputs_for_window(settings, aoi, code, wstart, wend, same_month))
+            results.append(build_outputs_for_window(settings, aoi, tiles, code, wstart, wend, same_month))
     finally:
         client.close()
 
@@ -147,16 +148,45 @@ def validate_existing_window(settings: Settings, aoi, code: str, wstart, wend, s
     )
 
 
-def build_outputs_for_window(settings: Settings, aoi, code: str, wstart, wend, same_month: bool) -> WindowResult:
+def tile_source_files(settings: Settings, tiles: gpd.GeoDataFrame, base: str, name_prefix: str) -> list[Path]:
+    files: list[Path] = []
+    seen: set[Path] = set()
+    for _, tile in tiles.iterrows():
+        path = settings.work_dir / get_tile_id(tile.geometry) / f"{name_prefix}_{base}.tif"
+        if path.exists() and path not in seen:
+            files.append(path)
+            seen.add(path)
+    return files
+
+
+def build_outputs_for_window(
+    settings: Settings,
+    aoi,
+    tiles: gpd.GeoDataFrame,
+    code: str,
+    wstart,
+    wend,
+    same_month: bool,
+) -> WindowResult:
     suffix = output_suffix(code, wstart, wend, same_month)
     base = f"{wstart:%Y%m%d}_{wend:%Y%m%d}"
-    if len(glob(str(settings.work_dir / f"*/ndvi_{base}.tif"))) == 0:
+    stack_files = tile_source_files(settings, tiles, base, "stack")
+    ndvi_files = tile_source_files(settings, tiles, base, "ndvi")
+    if not ndvi_files:
         raise ValueError(f"Nessuna composite per {suffix}")
 
     stack_name = f"S2_stack_{suffix}.tif"
     ndvi_name = f"S2_ndvi_{suffix}.tif"
     stats_name = f"S2_stats_{suffix}.csv"
-    mosaic_export(f"*/stack_{base}.tif", settings.stack_dir, stack_name, settings, dtype="Int16", aoi=aoi)
+    mosaic_export(
+        f"*/stack_{base}.tif",
+        settings.stack_dir,
+        stack_name,
+        settings,
+        dtype="Int16",
+        aoi=aoi,
+        source_files=stack_files,
+    )
     mosaic_export(
         f"*/ndvi_{base}.tif",
         settings.ndvi_dir,
@@ -165,6 +195,7 @@ def build_outputs_for_window(settings: Settings, aoi, code: str, wstart, wend, s
         dtype="Int16",
         aoi=aoi,
         scale_forced=1 / 10000.0,
+        source_files=ndvi_files,
     )
     ndvi_fp = settings.ndvi_dir / ndvi_name
     stack_fp = settings.stack_dir / stack_name
