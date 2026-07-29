@@ -69,7 +69,7 @@ def mosaic_export(
         "GDAL_NUM_THREADS",
         settings.gdal_threads,
         "-wm",
-        str(settings.gdal_warp_memory_mb),
+        f"{settings.gdal_warp_memory_mb}MB",
         "-co",
         "TILED=YES",
         "-co",
