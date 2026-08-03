@@ -43,10 +43,16 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--gdal-timeout", type=int, default=14400, help="Timeout comandi GDAL in secondi")
     parser.add_argument("--max-items", type=int, default=10, help="Numero massimo scene Sentinel-2 per tile/mese")
     parser.add_argument(
-        "--temporal-fallback-coverage-threshold",
+        "--seasonal-fallback-coverage-threshold",
         type=float,
-        default=0.20,
-        help="Soglia copertura tile sotto cui usare mese precedente e successivo",
+        default=0.98,
+        help="Soglia copertura tile sotto cui usare gli stessi mesi degli anni precedenti",
+    )
+    parser.add_argument(
+        "--seasonal-fallback-years",
+        type=int,
+        default=2,
+        help="Numero anni precedenti da usare per il fallback stagionale",
     )
     parser.add_argument("--log-file", type=Path, help="File log esplicito")
     parser.add_argument("--interactive", action="store_true", help="Richiede regione e date in modo interattivo")
@@ -188,7 +194,8 @@ def main(argv: list[str] | None = None) -> int:
         gdal_warp_memory_mb=args.gdal_warp_memory_mb,
         gdal_timeout=args.gdal_timeout,
         max_items=args.max_items,
-        temporal_fallback_coverage_threshold=args.temporal_fallback_coverage_threshold,
+        seasonal_fallback_coverage_threshold=args.seasonal_fallback_coverage_threshold,
+        seasonal_fallback_years=args.seasonal_fallback_years,
     )
     settings.ensure_directories()
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Sequence
 
 import numpy as np
 import odc.stac
@@ -23,37 +24,52 @@ def compute_valid_ratio(mask_bool: xr.DataArray) -> float:
     return float(mask_bool.mean().compute().item())
 
 
+def _normalize_ranges(rng: tuple[str, str] | Sequence[tuple[str, str]]) -> list[tuple[str, str]]:
+    if isinstance(rng, tuple) and len(rng) == 2 and isinstance(rng[0], str):
+        return [rng]
+    return list(rng)
+
+
 @retry(6, 30)
 def load_s2_median(
     catalog: StacClient,
     settings: Settings,
     geom_wgs84,
-    rng: tuple[str, str],
+    rng: tuple[str, str] | Sequence[tuple[str, str]],
     target_crs: str,
     use_scl: bool = True,
     max_attempts: int = 5,
 ) -> xr.Dataset | None:
-    import random
-
     last_ds = None
+    ranges = _normalize_ranges(rng)
     for attempt in range(1, max_attempts + 1):
-        search = catalog.search(
-            collections=["sentinel-2-l2a"],
-            bbox=geom_wgs84.bounds,
-            datetime=rng,
-            query={"eo:cloud_cover": {"lt": settings.cloud_cover_lt}},
-        )
-        items = list(search.items())
+        items = []
+        found_by_range = []
+        for current_range in ranges:
+            search = catalog.search(
+                collections=["sentinel-2-l2a"],
+                bbox=geom_wgs84.bounds,
+                datetime=current_range,
+                query={"eo:cloud_cover": {"lt": settings.cloud_cover_lt}},
+            )
+            current_items = list(search.items())
+            found_by_range.append(f"{current_range[0]}->{current_range[1]}:{len(current_items)}")
+            items.extend(current_items)
         if not items:
-            LOGGER.warning("Nessuna scena trovata per %s", rng)
+            LOGGER.warning("Nessuna scena trovata per %s", ", ".join(found_by_range) or ranges)
             return None
 
         found_items = len(items)
         items.sort(key=lambda item: item.properties.get("eo:cloud_cover", 100))
         items = items[: settings.max_items]
-        LOGGER.info("Scene Sentinel-2 trovate=%s usate=%s max_items=%s", found_items, len(items), settings.max_items)
+        LOGGER.info(
+            "Scene Sentinel-2 trovate=%s usate=%s max_items=%s finestre=%s",
+            found_items,
+            len(items),
+            settings.max_items,
+            ", ".join(found_by_range),
+        )
         items = [planetary_computer.sign(item) for item in items]
-        random.shuffle(items)
 
         bands = ["B04", "B03", "B02", "B08"]
         if use_scl:

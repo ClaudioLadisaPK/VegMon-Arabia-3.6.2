@@ -103,9 +103,26 @@ def build_tile_for_range(
     use_scl: bool,
     catalog: StacClient,
 ) -> bool:
-    rng = (start.isoformat(), end.isoformat())
+    return build_tile_for_ranges(
+        geom,
+        paths,
+        [(start.isoformat(), end.isoformat())],
+        settings,
+        use_scl=use_scl,
+        catalog=catalog,
+    )
+
+
+def build_tile_for_ranges(
+    geom,
+    paths: TilePaths,
+    ranges: list[tuple[str, str]],
+    settings: Settings,
+    use_scl: bool,
+    catalog: StacClient,
+) -> bool:
     geom_wgs84 = gpd.GeoSeries([geom], crs=settings.final_mosaic_crs).to_crs("EPSG:4326").iloc[0]
-    med = load_s2_median(catalog, settings, geom_wgs84, rng, settings.final_mosaic_crs, use_scl=use_scl)
+    med = load_s2_median(catalog, settings, geom_wgs84, ranges, settings.final_mosaic_crs, use_scl=use_scl)
     if med is None:
         return False
 
@@ -119,6 +136,13 @@ def build_tile_for_range(
 
     build_tile_products(med, paths, settings, crs_to_use, crs_str)
     return True
+
+
+def seasonal_fallback_ranges(start, end, years: int) -> list[tuple[str, str]]:
+    return [
+        ((start - relativedelta(years=year)).isoformat(), (end - relativedelta(years=year)).isoformat())
+        for year in range(1, years + 1)
+    ]
 
 
 @retry(6, 30)
@@ -150,24 +174,23 @@ def compute_sentinel2_composite(
         compute_sentinel2_composite(geom, tile_id, start, end, settings, use_scl=False, catalog=catalog)
         return
 
-    if coverage >= settings.temporal_fallback_coverage_threshold:
+    if coverage >= settings.seasonal_fallback_coverage_threshold:
         return
 
-    fallback_start = start - relativedelta(months=1)
-    fallback_end = end + relativedelta(months=1)
+    fallback_ranges = seasonal_fallback_ranges(start, end, settings.seasonal_fallback_years)
     LOGGER.warning(
-        "Tile %s copertura critica %.2f%%: fallback temporale %s -> %s senza SCL",
+        "Tile %s copertura %.2f%% sotto soglia %.2f%%: fallback stagionale anni precedenti %s senza SCL",
         tile_id,
         coverage * 100,
-        fallback_start,
-        fallback_end,
+        settings.seasonal_fallback_coverage_threshold * 100,
+        ", ".join(f"{rng[0]}->{rng[1]}" for rng in fallback_ranges),
     )
     remove_tile_products(paths)
-    if not build_tile_for_range(geom, paths, fallback_start, fallback_end, settings, use_scl=False, catalog=catalog):
-        LOGGER.warning("Fallback temporale senza dataset valido per %s %s", tile_id, base)
+    if not build_tile_for_ranges(geom, paths, fallback_ranges, settings, use_scl=False, catalog=catalog):
+        LOGGER.warning("Fallback stagionale senza dataset valido per %s %s", tile_id, base)
         return
     fallback_coverage = raster_coverage_ratio(paths.ndvi, settings.ndvi_nodata)
-    LOGGER.info("Tile %s copertura dopo fallback temporale: %.2f%%", tile_id, fallback_coverage * 100)
+    LOGGER.info("Tile %s copertura dopo fallback stagionale: %.2f%%", tile_id, fallback_coverage * 100)
 
 
 def tile_coverage_in_aoi(ndvi_fp: Path, tile_geom, aoi_union, nodata_val: int) -> float:
@@ -208,7 +231,7 @@ def ensure_full_grid_coverage(
                 missing.append((tid, tile.geometry, 0.0))
                 continue
             ratio = tile_coverage_in_aoi(ndvi_fp, tile.geometry, aoi_union, settings.ndvi_nodata)
-            if ratio < settings.temporal_fallback_coverage_threshold:
+            if ratio < settings.seasonal_fallback_coverage_threshold:
                 if tid in attempted_critical:
                     unresolved_critical.append((tid, ratio))
                 else:
@@ -233,7 +256,7 @@ def ensure_full_grid_coverage(
                 LOGGER.warning("Tile %s resta sotto soglia critica dopo retry copertura: %.2f%%", tid, ratio * 100)
             return
         for tid, geom, ratio in critical_coverage:
-            LOGGER.info("Ricalcolo tile critica %s con fallback temporale (copertura %.2f%%)", tid, ratio * 100)
+            LOGGER.info("Ricalcolo tile critica %s con fallback stagionale (copertura %.2f%%)", tid, ratio * 100)
             attempted_critical.add(tid)
             remove_tile_products(build_tile_paths(settings, tid, base))
             compute_sentinel2_composite(
