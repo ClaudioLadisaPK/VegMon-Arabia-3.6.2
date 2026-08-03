@@ -1,16 +1,18 @@
 from __future__ import annotations
 
 import math
+import logging
 
 import geopandas as gpd
 import numpy as np
 import pandas as pd
 import rasterio
-from rasterio.vrt import WarpedVRT
-from rasterio.warp import Resampling
 
 from .config import Settings
-from .utils import get_utm_crs_from_lat_lon
+
+
+LOGGER = logging.getLogger(__name__)
+WEB_MERCATOR_RADIUS = 6378137.0
 
 
 def mask_is_all_valid(mask) -> bool:
@@ -21,18 +23,37 @@ def mask_is_all_valid(mask) -> bool:
     return False
 
 
+def _web_mercator_row_area_ha(transform, rows: np.ndarray) -> np.ndarray:
+    y = transform.f + (rows.astype(np.float64) + 0.5) * transform.e
+    lat_rad = np.arctan(np.sinh(y / WEB_MERCATOR_RADIUS))
+    projected_area_ha = abs(transform.a * transform.e - transform.b * transform.d) / 10000.0
+    return projected_area_ha * np.cos(lat_rad) ** 2
+
+
 def classify_stats(aoi: gpd.GeoDataFrame, ndvi_filename: str, settings: Settings, out_csv_name: str) -> None:
     ndvi_fp = settings.ndvi_dir / ndvi_filename
+    LOGGER.info("Calcolo statistiche NDVI %s", ndvi_filename)
     with rasterio.open(ndvi_fp) as src:
         scale = np.float32(src.scales[0] if getattr(src, "scales", None) else 1.0)
+        pixel_area_ha = abs(src.transform.a * src.transform.e - src.transform.b * src.transform.d) / 10000.0
+        use_web_mercator_area = src.crs and src.crs.to_epsg() == 3857
         n = 0
         s = 0.0
         ss = 0.0
         cur_min = np.inf
         cur_max = -np.inf
+        veg_pixels = 0
+        area_veg = 0.0
         for _, window in src.block_windows(1):
             block = src.read(1, window=window, masked=True)
-            vals = block.data.astype(np.float32, copy=False) * scale if mask_is_all_valid(block.mask) else block.compressed().astype(np.float32, copy=False) * scale
+            data = block.data.astype(np.float32, copy=False) * scale
+            if mask_is_all_valid(block.mask):
+                vals = data.ravel()
+                veg_mask = data >= settings.ndvi_threshold
+            else:
+                valid_mask = ~np.ma.getmaskarray(block)
+                vals = data[valid_mask]
+                veg_mask = valid_mask & (data >= settings.ndvi_threshold)
             if vals.size == 0:
                 continue
             n += vals.size
@@ -40,26 +61,21 @@ def classify_stats(aoi: gpd.GeoDataFrame, ndvi_filename: str, settings: Settings
             ss += float((vals * vals).sum())
             cur_min = min(cur_min, float(vals.min()))
             cur_max = max(cur_max, float(vals.max()))
+            if use_web_mercator_area:
+                veg_rows = np.nonzero(veg_mask)[0] + int(window.row_off)
+                if veg_rows.size:
+                    rows, counts = np.unique(veg_rows, return_counts=True)
+                    area_veg += float(np.sum(counts * _web_mercator_row_area_ha(src.transform, rows)))
+            else:
+                veg_pixels += int(np.count_nonzero(veg_mask))
         if n == 0:
             raise ValueError(f"Nessun pixel NDVI valido in {ndvi_fp}")
 
     mean_ndvi = s / n
     var = max(ss / n - mean_ndvi * mean_ndvi, 0.0)
     std_ndvi = math.sqrt(var)
-    centroid_wgs84 = aoi.to_crs("EPSG:4326").geometry.centroid.iloc[0]
-    utm_crs = get_utm_crs_from_lat_lon(float(centroid_wgs84.y), float(centroid_wgs84.x))
-
-    with rasterio.open(ndvi_fp) as src_ndvi:
-        scale = np.float32(src_ndvi.scales[0] if getattr(src_ndvi, "scales", None) else 1.0)
-        with WarpedVRT(src_ndvi, crs=utm_crs, resampling=Resampling.nearest) as vrt:
-            res_x, res_y = vrt.res
-            pixel_area_ha = (abs(res_x) * abs(res_y)) / 10000.0
-            veg_pixels = 0
-            for _, window in vrt.block_windows(1):
-                block = vrt.read(1, window=window, masked=True)
-                vals = block.data.astype(np.float32, copy=False) * scale if mask_is_all_valid(block.mask) else block.data[~block.mask].astype(np.float32, copy=False) * scale
-                veg_pixels += int(np.sum(vals >= settings.ndvi_threshold))
-    area_veg = veg_pixels * pixel_area_ha
+    if not use_web_mercator_area:
+        area_veg = veg_pixels * pixel_area_ha
     pd.DataFrame(
         {
             "Min_NDVI": [cur_min],
@@ -69,3 +85,4 @@ def classify_stats(aoi: gpd.GeoDataFrame, ndvi_filename: str, settings: Settings
             "Area_vegetata_ha": [area_veg],
         }
     ).to_csv(settings.stats_dir / out_csv_name, sep=";", decimal=",", index=False)
+    LOGGER.info("Statistiche NDVI create %s", out_csv_name)
