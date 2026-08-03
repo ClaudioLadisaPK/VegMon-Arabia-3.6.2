@@ -47,7 +47,7 @@ class Settings:
     gdal_timeout: int = 14400
     stac_url: str = "https://planetarycomputer.microsoft.com/api/stac/v1"
     resolution: int = 10
-    max_items: int = 20
+    max_items: int = 5
     min_valid_ratio: float = 0.95
     coverage_threshold: float = 0.99
     final_ndvi_valid_ratio: float = 0.99

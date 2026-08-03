@@ -48,8 +48,11 @@ def load_s2_median(
             LOGGER.warning("Nessuna scena trovata per %s", rng)
             return None
 
+        found_items = len(items)
         items.sort(key=lambda item: item.properties.get("eo:cloud_cover", 100))
-        items = [planetary_computer.sign(item) for item in items[: settings.max_items]]
+        items = items[: settings.max_items]
+        LOGGER.info("Scene Sentinel-2 trovate=%s usate=%s max_items=%s", found_items, len(items), settings.max_items)
+        items = [planetary_computer.sign(item) for item in items]
         random.shuffle(items)
 
         bands = ["B04", "B03", "B02", "B08"]
