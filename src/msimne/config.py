@@ -47,11 +47,12 @@ class Settings:
     gdal_timeout: int = 14400
     stac_url: str = "https://planetarycomputer.microsoft.com/api/stac/v1"
     resolution: int = 10
-    max_items: int = 5
+    max_items: int = 10
     min_valid_ratio: float = 0.95
     coverage_threshold: float = 0.99
     final_ndvi_valid_ratio: float = 0.99
     max_coverage_loops: int = 5
+    temporal_fallback_coverage_threshold: float = 0.20
     cloud_cover_lt: int = 80
     ndvi_threshold: float = 0.2
     valid_scl_classes: tuple[int, ...] = (2, 4, 5, 6, 7)

@@ -10,6 +10,7 @@ import rasterio
 import rasterio.mask
 import rioxarray  # noqa: F401 - registers the .rio accessor on xarray objects
 import xarray as xr
+from dateutil.relativedelta import relativedelta
 from rasterio.features import geometry_mask
 from rasterio.warp import Resampling
 from pystac_client import Client as StacClient
@@ -46,14 +47,17 @@ def build_tile_paths(settings: Settings, tile_id: str, base: str) -> TilePaths:
     )
 
 
-def validate_raster_coverage(path: Path, nodata_val: int, min_valid_ratio: float) -> bool:
+def raster_coverage_ratio(path: Path, nodata_val: int) -> float:
     with rasterio.open(path) as src:
         scale = max(int(max(src.width, src.height) / 2000), 1)
         out_h = max(src.height // scale, 1)
         out_w = max(src.width // scale, 1)
         arr = src.read(1, out_shape=(out_h, out_w), resampling=Resampling.nearest)
-        ratio = float(np.count_nonzero(arr != nodata_val)) / arr.size
-        return ratio >= min_valid_ratio
+        return float(np.count_nonzero(arr != nodata_val)) / arr.size
+
+
+def validate_raster_coverage(path: Path, nodata_val: int, min_valid_ratio: float) -> bool:
+    return raster_coverage_ratio(path, nodata_val) >= min_valid_ratio
 
 
 def build_tile_products(med: xr.Dataset, paths: TilePaths, settings: Settings, crs_to_use, crs_str: str) -> None:
@@ -84,29 +88,26 @@ def build_tile_products(med: xr.Dataset, paths: TilePaths, settings: Settings, c
     veg.rio.to_raster(paths.binary, compress="DEFLATE", predictor=2, dtype="int16")
 
 
-@retry(6, 30)
-def compute_sentinel2_composite(
+def remove_tile_products(paths: TilePaths) -> None:
+    for path in (paths.stack, paths.ndvi, paths.binary):
+        if path.exists():
+            path.unlink()
+
+
+def build_tile_for_range(
     geom,
-    tile_id: str,
+    paths: TilePaths,
     start,
     end,
     settings: Settings,
-    use_scl: bool = True,
-    catalog: StacClient | None = None,
-) -> None:
-    base = f"{start:%Y%m%d}_{end:%Y%m%d}"
-    paths = build_tile_paths(settings, tile_id, base)
-    if all(path.exists() for path in (paths.stack, paths.ndvi, paths.binary)) and use_scl:
-        LOGGER.info("Tile %s gia elaborato per %s", tile_id, base)
-        return
-
+    use_scl: bool,
+    catalog: StacClient,
+) -> bool:
     rng = (start.isoformat(), end.isoformat())
     geom_wgs84 = gpd.GeoSeries([geom], crs=settings.final_mosaic_crs).to_crs("EPSG:4326").iloc[0]
-    catalog = catalog or open_catalog(settings)
     med = load_s2_median(catalog, settings, geom_wgs84, rng, settings.final_mosaic_crs, use_scl=use_scl)
     if med is None:
-        LOGGER.warning("Nessun dataset valido per %s %s", tile_id, base)
-        return
+        return False
 
     med = med.persist()
     try:
@@ -117,13 +118,56 @@ def compute_sentinel2_composite(
         crs_str = rasterio.crs.CRS.from_user_input(settings.final_mosaic_crs).to_string()
 
     build_tile_products(med, paths, settings, crs_to_use, crs_str)
+    return True
 
-    if use_scl and not validate_raster_coverage(paths.ndvi, settings.ndvi_nodata, settings.min_valid_ratio):
+
+@retry(6, 30)
+def compute_sentinel2_composite(
+    geom,
+    tile_id: str,
+    start,
+    end,
+    settings: Settings,
+    use_scl: bool = True,
+    catalog: StacClient | None = None,
+    force: bool = False,
+) -> None:
+    base = f"{start:%Y%m%d}_{end:%Y%m%d}"
+    paths = build_tile_paths(settings, tile_id, base)
+    if not force and all(path.exists() for path in (paths.stack, paths.ndvi, paths.binary)) and use_scl:
+        LOGGER.info("Tile %s gia elaborato per %s", tile_id, base)
+        return
+
+    catalog = catalog or open_catalog(settings)
+    if not build_tile_for_range(geom, paths, start, end, settings, use_scl=use_scl, catalog=catalog):
+        LOGGER.warning("Nessun dataset valido per %s %s", tile_id, base)
+        return
+
+    coverage = raster_coverage_ratio(paths.ndvi, settings.ndvi_nodata)
+    if use_scl and coverage < settings.min_valid_ratio:
         LOGGER.info("Copertura insufficiente per %s, rigenero senza SCL", tile_id)
-        for path in (paths.stack, paths.ndvi, paths.binary):
-            if path.exists():
-                path.unlink()
+        remove_tile_products(paths)
         compute_sentinel2_composite(geom, tile_id, start, end, settings, use_scl=False, catalog=catalog)
+        return
+
+    if coverage >= settings.temporal_fallback_coverage_threshold:
+        return
+
+    fallback_start = start - relativedelta(months=1)
+    fallback_end = end + relativedelta(months=1)
+    LOGGER.warning(
+        "Tile %s copertura critica %.2f%%: fallback temporale %s -> %s senza SCL",
+        tile_id,
+        coverage * 100,
+        fallback_start,
+        fallback_end,
+    )
+    remove_tile_products(paths)
+    if not build_tile_for_range(geom, paths, fallback_start, fallback_end, settings, use_scl=False, catalog=catalog):
+        LOGGER.warning("Fallback temporale senza dataset valido per %s %s", tile_id, base)
+        return
+    fallback_coverage = raster_coverage_ratio(paths.ndvi, settings.ndvi_nodata)
+    LOGGER.info("Tile %s copertura dopo fallback temporale: %.2f%%", tile_id, fallback_coverage * 100)
 
 
 def tile_coverage_in_aoi(ndvi_fp: Path, tile_geom, aoi_union, nodata_val: int) -> float:
@@ -151,8 +195,11 @@ def ensure_full_grid_coverage(
 ) -> None:
     base = f"{wstart:%Y%m%d}_{wend:%Y%m%d}"
     aoi_union = aoi.geometry.unary_union
+    attempted_critical: set[str] = set()
     for loop_idx in range(1, settings.max_coverage_loops + 1):
         missing = []
+        critical_coverage = []
+        unresolved_critical = []
         low_coverage = []
         for _, tile in tiles_gdf.iterrows():
             tid = get_tile_id(tile.geometry)
@@ -161,17 +208,44 @@ def ensure_full_grid_coverage(
                 missing.append((tid, tile.geometry, 0.0))
                 continue
             ratio = tile_coverage_in_aoi(ndvi_fp, tile.geometry, aoi_union, settings.ndvi_nodata)
-            if ratio < settings.coverage_threshold:
+            if ratio < settings.temporal_fallback_coverage_threshold:
+                if tid in attempted_critical:
+                    unresolved_critical.append((tid, ratio))
+                else:
+                    critical_coverage.append((tid, tile.geometry, ratio))
+            elif ratio < settings.coverage_threshold:
                 low_coverage.append((tid, ratio))
+        if critical_coverage:
+            for tid, _, ratio in critical_coverage:
+                LOGGER.warning("Tile %s sotto soglia critica copertura: %.2f%%", tid, ratio * 100)
+        if unresolved_critical:
+            for tid, ratio in unresolved_critical:
+                LOGGER.warning("Tile %s resta sotto soglia critica dopo fallback: %.2f%%", tid, ratio * 100)
         if low_coverage:
             for tid, ratio in low_coverage:
                 LOGGER.warning("Tile %s sotto soglia copertura: %.2f%%", tid, ratio * 100)
-        if not missing:
+        if not missing and not critical_coverage:
             return
         if loop_idx == settings.max_coverage_loops:
             for tid, _, ratio in missing:
                 LOGGER.warning("Tile %s mancante dopo retry copertura: %.2f%%", tid, ratio * 100)
+            for tid, _, ratio in critical_coverage:
+                LOGGER.warning("Tile %s resta sotto soglia critica dopo retry copertura: %.2f%%", tid, ratio * 100)
             return
+        for tid, geom, ratio in critical_coverage:
+            LOGGER.info("Ricalcolo tile critica %s con fallback temporale (copertura %.2f%%)", tid, ratio * 100)
+            attempted_critical.add(tid)
+            remove_tile_products(build_tile_paths(settings, tid, base))
+            compute_sentinel2_composite(
+                geom,
+                tid,
+                wstart.date(),
+                wend.date(),
+                settings,
+                use_scl=False,
+                catalog=catalog,
+                force=True,
+            )
         for tid, geom, ratio in missing:
             LOGGER.info("Ricalcolo tile mancante %s senza SCL (copertura %.2f%%)", tid, ratio * 100)
             compute_sentinel2_composite(geom, tid, wstart.date(), wend.date(), settings, use_scl=False, catalog=catalog)
