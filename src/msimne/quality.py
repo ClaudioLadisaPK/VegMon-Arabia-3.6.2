@@ -108,7 +108,7 @@ def validate_and_fill_ndvi(path: Path, aoi: gpd.GeoDataFrame, settings: Settings
     interpolated_ratio = 0.0
     filled = False
     after = before
-    if before < settings.final_ndvi_valid_ratio:
+    if before < settings.final_ndvi_valid_ratio and settings.enable_final_gap_fill:
         interpolated_ratio = gap_fill_ndvi_inplace(path, aoi, settings)
         filled = interpolated_ratio > 0
         after = ndvi_valid_ratio(path, aoi, settings.ndvi_nodata)
@@ -117,6 +117,13 @@ def validate_and_fill_ndvi(path: Path, aoi: gpd.GeoDataFrame, settings: Settings
             path.name,
             after * 100,
             interpolated_ratio * 100,
+        )
+    elif before < settings.final_ndvi_valid_ratio:
+        LOGGER.warning(
+            "NDVI coverage sotto soglia per %s: %.2f%% < %.2f%%; gap filling finale disabilitato",
+            path.name,
+            before * 100,
+            settings.final_ndvi_valid_ratio * 100,
         )
     return NdviQuality(
         valid_ratio_before=before,
