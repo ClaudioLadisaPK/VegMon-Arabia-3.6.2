@@ -26,6 +26,13 @@ def test_settings_defaults(tmp_path: Path):
     assert settings.resolve_grid_file() == tmp_path / "inputs" / "grids" / "ARAB_GRIGLIA.geojson"
 
 
+def test_settings_work_dir_override(tmp_path: Path):
+    work_dir = tmp_path / "scratch" / "working_s2"
+    settings = Settings(project_root=tmp_path, outputs_dir_override=tmp_path / "outputs", work_dir_override=work_dir)
+    assert settings.outputs_dir == tmp_path / "outputs"
+    assert settings.work_dir == work_dir
+
+
 def test_previous_month_window():
     start, end = previous_month_window(parse_date("2026-07-27").date())
     assert start.strftime("%Y-%m-%d") == "2026-06-01"

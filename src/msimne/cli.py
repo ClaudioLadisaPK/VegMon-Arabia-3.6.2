@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import time
 from datetime import datetime
 from pathlib import Path
@@ -17,9 +18,19 @@ from .state import PipelineState, RegionRunRecord, utc_now_iso, write_region_rep
 from .utils import parse_date, previous_month_window
 
 
+def env_path(name: str) -> Path | None:
+    value = os.environ.get(name)
+    return Path(value) if value else None
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="MSIMNE Sentinel-2 NDVI pipeline")
-    parser.add_argument("--project-root", type=Path, default=Path.cwd(), help="Cartella progetto")
+    parser.add_argument(
+        "--project-root",
+        type=Path,
+        default=env_path("MSIMNE_PROJECT_ROOT") or Path.cwd(),
+        help="Cartella progetto; default cwd o MSIMNE_PROJECT_ROOT",
+    )
     parser.add_argument("--region", choices=sorted(PRODUCTION_REGIONS), help="Codice regione R01..R13")
     parser.add_argument("--all-regions", action="store_true", help="Elabora tutte le regioni operative R01..R13")
     parser.add_argument("--start", help="Data inizio: YYYY-MM-DD o YYYY-MM")
@@ -32,9 +43,30 @@ def build_parser() -> argparse.ArgumentParser:
         help="Elabora il primo mese incompleto nella sequenza operativa",
     )
     parser.add_argument("--from-month", default="2026-03", help="Primo mese della sequenza operativa: YYYY-MM")
-    parser.add_argument("--inputs-dir", type=Path, help="Cartella inputs; default <project-root>/inputs")
-    parser.add_argument("--outputs-dir", type=Path, help="Cartella outputs; default <project-root>/outputs")
-    parser.add_argument("--grid-file", type=Path, help="Override del file griglia")
+    parser.add_argument(
+        "--inputs-dir",
+        type=Path,
+        default=env_path("MSIMNE_INPUTS_DIR"),
+        help="Cartella inputs; default <project-root>/inputs o MSIMNE_INPUTS_DIR",
+    )
+    parser.add_argument(
+        "--outputs-dir",
+        type=Path,
+        default=env_path("MSIMNE_OUTPUTS_DIR"),
+        help="Cartella outputs; default <project-root>/outputs o MSIMNE_OUTPUTS_DIR",
+    )
+    parser.add_argument(
+        "--work-dir",
+        type=Path,
+        default=env_path("MSIMNE_WORK_DIR"),
+        help="Cartella temporanea di lavoro; default <outputs-dir>/working_s2 o MSIMNE_WORK_DIR",
+    )
+    parser.add_argument(
+        "--grid-file",
+        type=Path,
+        default=env_path("MSIMNE_GRID_FILE"),
+        help="Override del file griglia o MSIMNE_GRID_FILE",
+    )
     parser.add_argument("--workers", type=int, default=16, help="Numero worker Dask")
     parser.add_argument("--threads-per-worker", type=int, default=2, help="Thread per worker Dask")
     parser.add_argument("--memory-limit", default="12GB", help="Limite memoria per worker Dask")
@@ -186,6 +218,7 @@ def main(argv: list[str] | None = None) -> int:
         project_root=args.project_root.resolve(),
         inputs_dir_override=args.inputs_dir.resolve() if args.inputs_dir else None,
         outputs_dir_override=args.outputs_dir.resolve() if args.outputs_dir else None,
+        work_dir_override=args.work_dir.resolve() if args.work_dir else None,
         grid_file_override=args.grid_file.resolve() if args.grid_file else None,
         dask_workers=args.workers,
         dask_threads_per_worker=args.threads_per_worker,

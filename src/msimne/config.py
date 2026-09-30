@@ -29,6 +29,7 @@ class Settings:
     project_root: Path
     inputs_dir_override: Path | None = None
     outputs_dir_override: Path | None = None
+    work_dir_override: Path | None = None
     grid_file_override: Path | None = None
     final_mosaic_crs: str = "EPSG:3857"
     inputs_dir: Path = field(init=False)
@@ -75,7 +76,7 @@ class Settings:
             if self.grid_file_override is not None
             else (self.grids_dir / "ARAB_GRIGLIA.geojson").resolve()
         )
-        self.work_dir = self.outputs_dir / "working_s2"
+        self.work_dir = (self.work_dir_override or (self.outputs_dir / "working_s2")).resolve()
         self.stack_dir = self.outputs_dir / "S2" / "STACK"
         self.ndvi_dir = self.outputs_dir / "S2" / "NDVI"
         self.stats_dir = self.outputs_dir / "S2" / "STATS"

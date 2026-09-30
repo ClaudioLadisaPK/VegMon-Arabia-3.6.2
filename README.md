@@ -267,6 +267,23 @@ python 3.6.2.py --region R05 --start 2025-03 --end 2025-04
 python 3.6.2.py --region R05 --start 2025-03 --end 2025-04 --inputs-dir ./inputs --outputs-dir ./outputs
 ```
 
+La cartella temporanea puo essere separata dagli output finali:
+
+```bash
+python 3.6.2.py --region R05 --start 2025-03 --end 2025-04 \
+  --outputs-dir ./outputs \
+  --work-dir ./scratch/working_s2
+```
+
+Gli stessi percorsi possono essere impostati anche con variabili ambiente:
+
+```bash
+export MSIMNE_INPUTS_DIR=/path/to/inputs
+export MSIMNE_OUTPUTS_DIR=/path/to/outputs
+export MSIMNE_WORK_DIR=/path/to/scratch/working_s2
+export MSIMNE_GRID_FILE=/path/to/inputs/grids/ARAB_GRIGLIA.geojson
+```
+
 ## Barra di avanzamento
 
 Se `tqdm` e installato, il pipeline mostra una barra di avanzamento per:
@@ -316,6 +333,48 @@ python 3.6.2.py --interactive
 - Windows nativo non e il target consigliato per questo progetto
 - il motivo principale sono i problemi di compatibilita tra `rasterio`, `GDAL` e DLL Windows
 - per uso stabile e riproducibile conviene WSL/Linux
+
+## Uso su Lightning
+
+Su Lightning conviene tenere separati:
+
+- codice del progetto
+- output persistenti
+- file temporanei di lavoro
+
+Esempio di run prudente per una macchina cloud media:
+
+```bash
+python 3.6.2.py \
+  --next-pending-month \
+  --from-month 2026-03 \
+  --all-regions \
+  --outputs-dir /teamspace/studios/this_studio/outputs \
+  --work-dir /teamspace/studios/this_studio/scratch/working_s2 \
+  --workers 4 \
+  --threads-per-worker 2 \
+  --memory-limit 6GB \
+  --gdal-threads 4 \
+  --gdal-warp-memory-mb 4096
+```
+
+Se la macchina Lightning ha piu RAM e CPU, aumentare gradualmente `--workers`, `--memory-limit`,
+`--gdal-threads` e `--gdal-warp-memory-mb`.
+
+Per usare variabili ambiente invece degli argomenti:
+
+```bash
+export MSIMNE_OUTPUTS_DIR=/teamspace/studios/this_studio/outputs
+export MSIMNE_WORK_DIR=/teamspace/studios/this_studio/scratch/working_s2
+python 3.6.2.py --next-pending-month --from-month 2026-03 --all-regions
+```
+
+Se disponibile, configurare la subscription key Planetary Computer come variabile ambiente della
+sessione Lightning, senza inserirla nel codice:
+
+```bash
+export PC_SDK_SUBSCRIPTION_KEY=...
+```
 
 ## Uso con Docker
 

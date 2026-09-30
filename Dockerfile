@@ -16,24 +16,7 @@ COPY src ./src
 COPY inputs ./inputs
 
 RUN python -m pip install --upgrade pip && \
-    pip install \
-    rasterio \
-    geopandas \
-    rioxarray \
-    xarray \
-    numpy \
-    pandas \
-    shapely \
-    pyproj \
-    pyogrio \
-    dask \
-    distributed \
-    pystac-client \
-    odc-stac \
-    planetary-computer \
-    python-dateutil \
-    requests \
-    tqdm
+    pip install .
 
-ENTRYPOINT ["python", "3.6.2.py"]
-CMD ["--interactive"]
+ENTRYPOINT ["msimne"]
+CMD ["--help"]
