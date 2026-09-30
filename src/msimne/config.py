@@ -50,7 +50,7 @@ class Settings:
     max_items: int = 10
     min_valid_ratio: float = 0.95
     coverage_threshold: float = 0.99
-    final_ndvi_valid_ratio: float = 0.99
+    final_ndvi_valid_ratio: float = 0.98
     max_coverage_loops: int = 5
     seasonal_fallback_coverage_threshold: float = 0.98
     seasonal_fallback_years: int = 2
@@ -63,6 +63,7 @@ class Settings:
     gdal_threads: str = "16"
     gdal_warp_memory_mb: int = 16384
     gap_fill_max_search_distance: float = 0.0
+    enable_final_gap_fill: bool = False
 
     def __post_init__(self) -> None:
         self.inputs_dir = (self.inputs_dir_override or (self.project_root / "inputs")).resolve()
