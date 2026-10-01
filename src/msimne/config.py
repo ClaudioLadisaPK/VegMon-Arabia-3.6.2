@@ -66,6 +66,7 @@ class Settings:
     dask_memory_limit: str = "12GB"
     gdal_threads: str = "16"
     gdal_warp_memory_mb: int = 16384
+    gdal_cache_mb: int = 4096
     gap_fill_max_search_distance: float = 0.0
     enable_final_gap_fill: bool = False
 

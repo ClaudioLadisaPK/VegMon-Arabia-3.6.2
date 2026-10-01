@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import gc
 import logging
 from dataclasses import dataclass
 from enum import Enum
@@ -93,6 +94,14 @@ def build_tile_products(med: xr.Dataset, paths: TilePaths, settings: Settings, c
     set_scale_offset(paths.ndvi, scale=1 / 10000.0, offset=0.0)
 
 
+def release_dask_collection(collection) -> None:
+    try:
+        collection.close()
+    except Exception:
+        pass
+    gc.collect()
+
+
 def remove_tile_products(paths: TilePaths) -> None:
     for path in (paths.stack, paths.ndvi):
         if path.exists():
@@ -153,7 +162,10 @@ def build_tile_for_ranges(
         crs_to_use = settings.final_mosaic_crs
         crs_str = rasterio.crs.CRS.from_user_input(settings.final_mosaic_crs).to_string()
 
-    build_tile_products(med, paths, settings, crs_to_use, crs_str)
+    try:
+        build_tile_products(med, paths, settings, crs_to_use, crs_str)
+    finally:
+        release_dask_collection(med)
     return TileBuildStatus.BUILT
 
 

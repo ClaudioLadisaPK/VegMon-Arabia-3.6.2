@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+import sys
 from glob import glob
 from pathlib import Path
 from typing import Iterable
@@ -103,6 +104,7 @@ def mosaic_export(
     run_gdal(
         [
             "gdal_translate",
+            "-stats",
             "-of",
             "COG",
             "-co",
@@ -111,6 +113,10 @@ def mosaic_export(
             "PREDICTOR=2",
             "-co",
             f"NUM_THREADS={settings.gdal_threads}",
+            "-co",
+            "OVERVIEWS=AUTO",
+            "-co",
+            "STATISTICS=YES",
             "-co",
             "BIGTIFF=IF_SAFER",
             "-a_nodata",
@@ -131,8 +137,9 @@ def mosaic_export(
 
 
 def run_gdal(command: list[str], settings: Settings) -> None:
+    env = gdal_subprocess_env(settings)
     try:
-        result = subprocess.run(command, capture_output=True, text=True, timeout=settings.gdal_timeout)
+        result = subprocess.run(command, capture_output=True, text=True, timeout=settings.gdal_timeout, env=env)
     except subprocess.TimeoutExpired as exc:
         raise RuntimeError(
             f"Command timed out after {settings.gdal_timeout} seconds: {' '.join(command)}"
@@ -150,3 +157,22 @@ def run_gdal(command: list[str], settings: Settings) -> None:
         if part.strip()
     )
     raise RuntimeError(details)
+
+
+def gdal_subprocess_env(settings: Settings) -> dict[str, str]:
+    env = os.environ.copy()
+    env["GDAL_CACHEMAX"] = str(settings.gdal_cache_mb)
+    prefix = Path(sys.prefix)
+    candidates = {
+        "GDAL_DATA": (prefix / "share" / "gdal", prefix / "Library" / "share" / "gdal"),
+        "PROJ_DATA": (prefix / "share" / "proj", prefix / "Library" / "share" / "proj"),
+        "PROJ_LIB": (prefix / "share" / "proj", prefix / "Library" / "share" / "proj"),
+    }
+    for name, paths in candidates.items():
+        if env.get(name):
+            continue
+        for path in paths:
+            if path.exists():
+                env[name] = str(path)
+                break
+    return env

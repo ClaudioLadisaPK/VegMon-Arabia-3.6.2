@@ -87,6 +87,12 @@ def build_parser() -> argparse.ArgumentParser:
         default=env_int("MSIMNE_GDAL_WARP_MEMORY_MB", 16384),
         help="Memoria gdalwarp in MB",
     )
+    parser.add_argument(
+        "--gdal-cache-mb",
+        type=int,
+        default=env_int("MSIMNE_GDAL_CACHE_MB", 4096),
+        help="GDAL_CACHEMAX in MB per processo",
+    )
     parser.add_argument("--gdal-timeout", type=int, default=14400, help="Timeout comandi GDAL in secondi")
     parser.add_argument(
         "--max-items",
@@ -263,6 +269,7 @@ def main(argv: list[str] | None = None) -> int:
         dask_memory_limit=args.memory_limit,
         gdal_threads=args.gdal_threads,
         gdal_warp_memory_mb=args.gdal_warp_memory_mb,
+        gdal_cache_mb=args.gdal_cache_mb,
         gdal_timeout=args.gdal_timeout,
         max_items=args.max_items,
         initial_max_items=args.initial_max_items,
@@ -271,6 +278,7 @@ def main(argv: list[str] | None = None) -> int:
         seasonal_fallback_coverage_threshold=args.seasonal_fallback_coverage_threshold,
         seasonal_fallback_years=args.seasonal_fallback_years,
     )
+    os.environ["GDAL_CACHEMAX"] = str(settings.gdal_cache_mb)
     settings.ensure_directories()
 
     has_window_arg = args.month or args.previous_month or args.next_pending_month or (args.start and args.end)

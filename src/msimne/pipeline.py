@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import gc
 import logging
 import shutil
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -15,7 +16,7 @@ try:
 except Exception:  # pragma: no cover
     tqdm = None
 
-from .composite import compute_sentinel2_composite, ensure_full_grid_coverage
+from .composite import build_tile_paths, compute_sentinel2_composite, ensure_full_grid_coverage
 from .config import REGION_NAMES, Settings
 from .mosaic import mosaic_export
 from .quality import NdviQuality, validate_and_fill_ndvi
@@ -85,12 +86,6 @@ def run_pipeline(settings: Settings, code: str, start_dt, end_dt) -> list[Window
     tiles = gpd.sjoin(grid, aoi_buff, how="inner", predicate="intersects").drop(columns=["index_right"])
     LOGGER.info("Tile count %s", len(tiles))
 
-    client = Client(
-        processes=True,
-        n_workers=settings.dask_workers,
-        threads_per_worker=settings.dask_threads_per_worker,
-        memory_limit=settings.dask_memory_limit,
-    )
     dask.config.set(
         {
             "distributed.worker.memory.target": 0.85,
@@ -98,7 +93,7 @@ def run_pipeline(settings: Settings, code: str, start_dt, end_dt) -> list[Window
             "distributed.scheduler.worker-saturation": 1.0,
         }
     )
-    odc.stac.configure_rio(cloud_defaults=True, client=client)
+    client: Client | None = None
     catalog = open_catalog(settings)
     item_cache = StacItemCache(catalog, settings, tiles.to_crs("EPSG:4326").total_bounds)
     results: list[WindowResult] = []
@@ -110,30 +105,83 @@ def run_pipeline(settings: Settings, code: str, start_dt, end_dt) -> list[Window
                 results.append(validate_existing_window(settings, aoi, code, wstart, wend, same_month))
                 continue
             LOGGER.info("Finestra %s/%s %s -> %s", widx, len(windows), wstart.date(), wend.date())
-            tile_jobs = [(pos, tile.geometry) for pos, (_, tile) in enumerate(tiles.iterrows(), start=1)]
+            base = f"{wstart:%Y%m%d}_{wend:%Y%m%d}"
+            tile_jobs = [
+                (pos, tile.geometry)
+                for pos, (_, tile) in enumerate(tiles.iterrows(), start=1)
+                if not tile_outputs_exist(settings, get_tile_id(tile.geometry), base)
+            ]
             if settings.tile_parallelism <= 1:
                 tile_rows = _progress(tile_jobs, total=len(tile_jobs), desc=f"Tile {wstart:%Y-%m}")
+                if tile_jobs:
+                    client = ensure_dask_client(client, settings)
                 for pos, geom in tile_rows:
-                    run_tile_job(settings, catalog, item_cache, geom, wstart, wend, pos, len(tile_jobs))
+                    run_tile_job(settings, catalog, item_cache, geom, wstart, wend, pos, len(tiles))
+                    flush_dask_memory(client)
             else:
                 LOGGER.info("Elaborazione tile in parallelo: parallelism=%s", settings.tile_parallelism)
+                if tile_jobs:
+                    client = ensure_dask_client(client, settings)
                 with ThreadPoolExecutor(max_workers=settings.tile_parallelism) as executor:
                     futures = [
-                        executor.submit(run_tile_job, settings, catalog, item_cache, geom, wstart, wend, pos, len(tile_jobs))
+                        executor.submit(run_tile_job, settings, catalog, item_cache, geom, wstart, wend, pos, len(tiles))
                         for pos, geom in tile_jobs
                     ]
                     for future in _progress(as_completed(futures), total=len(futures), desc=f"Tile {wstart:%Y-%m}"):
                         future.result()
+                flush_dask_memory(client)
+            if settings.seasonal_fallback_coverage_threshold > 0:
+                client = ensure_dask_client(client, settings)
             ensure_full_grid_coverage(tiles, aoi, wstart, wend, settings, catalog=catalog, item_cache=item_cache)
+            client = close_dask_client(client)
             results.append(build_outputs_for_window(settings, aoi, tiles, code, wstart, wend, same_month))
     finally:
-        try:
-            client.close(timeout=30)
-        except Exception:
-            LOGGER.warning("Chiusura client Dask non riuscita; gli output prodotti restano validi", exc_info=True)
+        client = close_dask_client(client)
 
     cleanup_workdir(settings)
     return results
+
+
+def ensure_dask_client(client: Client | None, settings: Settings) -> Client:
+    if client is not None:
+        return client
+    client = Client(
+        processes=True,
+        n_workers=settings.dask_workers,
+        threads_per_worker=settings.dask_threads_per_worker,
+        memory_limit=settings.dask_memory_limit,
+    )
+    odc.stac.configure_rio(cloud_defaults=True, client=client)
+    return client
+
+
+def close_dask_client(client: Client | None) -> Client | None:
+    if client is None:
+        return None
+    try:
+        LOGGER.info("Chiusura client Dask prima delle fasi GDAL finali")
+        flush_dask_memory(client)
+        client.close(timeout=30)
+    except Exception:
+        LOGGER.warning("Chiusura client Dask non riuscita; gli output prodotti restano validi", exc_info=True)
+    finally:
+        gc.collect()
+    return None
+
+
+def flush_dask_memory(client: Client | None) -> None:
+    if client is None:
+        return
+    try:
+        client.run(gc.collect)
+    except Exception:
+        LOGGER.debug("GC sui worker Dask non riuscito", exc_info=True)
+    gc.collect()
+
+
+def tile_outputs_exist(settings: Settings, tile_id: str, base: str) -> bool:
+    paths = build_tile_paths(settings, tile_id, base)
+    return paths.stack.exists() and paths.ndvi.exists()
 
 
 def run_tile_job(
