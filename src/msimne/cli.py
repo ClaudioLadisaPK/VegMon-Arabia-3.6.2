@@ -51,10 +51,11 @@ PROFILES = {
     # PC locale WSL ~15 GB RAM / 8 core. La fase mosaico resta sui valori che hanno
     # completato R04 2026-07 (il crash era in COG/overview con thread e cache GDAL alti).
     "wsl": {
-        # fase tile misurata su R10 2026-07 (test T08): 2,3x piu' veloce di 3x1/par 3, picco RAM 5,1 GB
+        # Configurazione del test T08 (R10 2026-07): fase tile 2,3x piu' veloce di 3x1/par 3,
+        # picco RAM di sistema 5,1 GB, output identici. Valori tenuti identici a quelli testati.
         "workers": 4,
         "threads_per_worker": 2,
-        "memory_limit": "3GB",
+        "memory_limit": "5GB",
         "tile_parallelism": 5,
         "tile_gdal_cache_mb": 1024,
         "gdal_threads": "2",
