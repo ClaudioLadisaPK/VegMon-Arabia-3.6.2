@@ -23,8 +23,8 @@ def _parse(argv, monkeypatch):
 
 def test_profile_wsl_values(monkeypatch):
     args = _parse(["--profile", "wsl"], monkeypatch)
-    assert args.workers == 3
-    assert args.tile_parallelism == 3
+    assert args.workers == 4
+    assert args.tile_parallelism == 5
     assert args.final_gdal_threads == "4"
 
 

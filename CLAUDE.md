@@ -37,7 +37,11 @@ python 3.6.2.py --month 2026-07 --region R05 --profile vm --aoi-simplify-m 5
 ## Benchmark: R06 Aseer, 2026-07 (2026-10-01, profilo wsl, test T06)
 - 206 tile, 71,3 min: tile 64,6 min (90%), mosaico STACK 4,9 (warp 1,5 + COG 3,4), NDVI 1,2, controllo copertura 6 s. Copertura 99,82%.
 - Mosaico con 6 thread GDAL: picco RAM GDAL 6,5 GB (sistema 8,5/15 GB) senza guadagno rispetto a 2 thread → profilo wsl a 4 thread. Il collo di bottiglia del mosaico e' la conversione COG (overview + statistiche raster calcolate due volte: `-stats` e `STATISTICS=YES`).
-- Fase tile: CPU ~25%, RAM ~3 GB, rete ~18 MB/s → margine per alzare workers/threads/tile-parallelism (da misurare su R10).
+- Fase tile: CPU ~25%, RAM ~3 GB, rete ~18 MB/s → margine per alzare workers/threads/tile-parallelism.
+
+## Benchmark: R10 Jazan, 2026-07 (2026-10-01, test T07/T08)
+- Fase tile 3 worker x 1 thread, tile-parallelism 3: 14,1 min (3,2 tile/min), totale 15,7 min.
+- Fase tile 4 worker x 2 thread, tile-parallelism 5: 6,1 min (7,4 tile/min), totale 7,6 min, stesso picco RAM (~5 GB), output identici pixel per pixel → adottato nel profilo wsl (memory-limit 3 GB per worker).
 
 ## Benchmark: R12 Al Bahah, 2026-07 (2026-10-01, profilo wsl)
 - Codice base 12 min 57 s; codice branch `ottimizzazione-aoi-grandi` 11 min 50 s con output identici pixel per pixel (tile 10:58, mosaici 45 s, nessun ricalcolo critico inutile).
