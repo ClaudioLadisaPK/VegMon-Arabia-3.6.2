@@ -28,6 +28,71 @@ def env_int(name: str, default: int) -> int:
     return int(value) if value else default
 
 
+# Profili macchina: valori di partenza per i parametri di performance.
+# Ordine di precedenza: parametro esplicito > variabile d'ambiente > profilo > default storico.
+BASE_PERFORMANCE = {
+    "workers": 16,
+    "threads_per_worker": 2,
+    "memory_limit": "12GB",
+    "gdal_threads": "16",
+    "gdal_warp_memory_mb": 16384,
+    "gdal_cache_mb": 4096,
+    "tile_parallelism": 1,
+    "final_gdal_threads": None,
+    "final_parallel_mosaics": 1,
+}
+PROFILES = {
+    # PC locale WSL ~15 GB RAM / 8 core: profilo che ha completato R04 2026-07.
+    "wsl": {
+        "workers": 3,
+        "threads_per_worker": 1,
+        "memory_limit": "5GB",
+        "gdal_threads": "2",
+        "gdal_warp_memory_mb": 512,
+        "gdal_cache_mb": 4096,
+        "tile_parallelism": 3,
+        "final_gdal_threads": "6",
+        "final_parallel_mosaics": 1,
+    },
+    # VM cliente NCVC: 72 vCPU, 240 GB RAM.
+    "vm": {
+        "workers": 12,
+        "threads_per_worker": 2,
+        "memory_limit": "12GB",
+        "gdal_threads": "2",
+        "gdal_warp_memory_mb": 8192,
+        "gdal_cache_mb": 4096,
+        "tile_parallelism": 8,
+        "final_gdal_threads": "16",
+        "final_parallel_mosaics": 2,
+    },
+}
+PERFORMANCE_ENV = {
+    "workers": ("MSIMNE_WORKERS", int),
+    "threads_per_worker": ("MSIMNE_THREADS_PER_WORKER", int),
+    "memory_limit": ("MSIMNE_MEMORY_LIMIT", str),
+    "gdal_threads": ("MSIMNE_GDAL_THREADS", str),
+    "gdal_warp_memory_mb": ("MSIMNE_GDAL_WARP_MEMORY_MB", int),
+    "gdal_cache_mb": ("MSIMNE_GDAL_CACHE_MB", int),
+    "tile_parallelism": ("MSIMNE_TILE_PARALLELISM", int),
+    "final_gdal_threads": ("MSIMNE_FINAL_GDAL_THREADS", str),
+    "final_parallel_mosaics": ("MSIMNE_FINAL_PARALLEL_MOSAICS", int),
+}
+
+
+def resolve_performance(args: argparse.Namespace) -> None:
+    profile = PROFILES.get(args.profile or "", {})
+    for name, default in BASE_PERFORMANCE.items():
+        if getattr(args, name) is not None:
+            continue
+        env_name, cast = PERFORMANCE_ENV[name]
+        env_value = os.environ.get(env_name)
+        if env_value:
+            setattr(args, name, cast(env_value))
+        else:
+            setattr(args, name, profile.get(name, default))
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="MSIMNE Sentinel-2 NDVI pipeline")
     parser.add_argument(
@@ -72,26 +137,29 @@ def build_parser() -> argparse.ArgumentParser:
         default=env_path("MSIMNE_GRID_FILE"),
         help="Override del file griglia o MSIMNE_GRID_FILE",
     )
-    parser.add_argument("--workers", type=int, default=env_int("MSIMNE_WORKERS", 16), help="Numero worker Dask")
     parser.add_argument(
-        "--threads-per-worker",
-        type=int,
-        default=env_int("MSIMNE_THREADS_PER_WORKER", 2),
-        help="Thread per worker Dask",
+        "--profile",
+        choices=sorted(PROFILES),
+        default=os.environ.get("MSIMNE_PROFILE") or None,
+        help="Profilo macchina (wsl = PC locale ~15 GB, vm = VM cliente); i parametri espliciti hanno precedenza",
     )
-    parser.add_argument("--memory-limit", default=os.environ.get("MSIMNE_MEMORY_LIMIT", "12GB"), help="Limite memoria per worker Dask")
-    parser.add_argument("--gdal-threads", default=os.environ.get("MSIMNE_GDAL_THREADS", "16"), help="Thread GDAL per warp/COG")
+    parser.add_argument("--workers", type=int, default=None, help="Numero worker Dask")
+    parser.add_argument("--threads-per-worker", type=int, default=None, help="Thread per worker Dask")
+    parser.add_argument("--memory-limit", default=None, help="Limite memoria per worker Dask")
+    parser.add_argument("--gdal-threads", default=None, help="Thread GDAL durante la fase tile")
+    parser.add_argument("--gdal-warp-memory-mb", type=int, default=None, help="Memoria gdalwarp in MB")
+    parser.add_argument("--gdal-cache-mb", type=int, default=None, help="GDAL_CACHEMAX in MB per processo")
     parser.add_argument(
-        "--gdal-warp-memory-mb",
-        type=int,
-        default=env_int("MSIMNE_GDAL_WARP_MEMORY_MB", 16384),
-        help="Memoria gdalwarp in MB",
+        "--final-gdal-threads",
+        default=None,
+        help="Thread GDAL per mosaico/COG finali (Dask e' gia chiuso); default = --gdal-threads",
     )
     parser.add_argument(
-        "--gdal-cache-mb",
+        "--final-parallel-mosaics",
         type=int,
-        default=env_int("MSIMNE_GDAL_CACHE_MB", 4096),
-        help="GDAL_CACHEMAX in MB per processo",
+        choices=(1, 2),
+        default=None,
+        help="2 = mosaici STACK e NDVI in parallelo (consigliato solo con molta RAM)",
     )
     parser.add_argument("--gdal-timeout", type=int, default=14400, help="Timeout comandi GDAL in secondi")
     parser.add_argument(
@@ -109,7 +177,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--tile-parallelism",
         type=int,
-        default=env_int("MSIMNE_TILE_PARALLELISM", 1),
+        default=None,
         help="Numero tile da elaborare in parallelo; aumentare con prudenza",
     )
     parser.add_argument(
@@ -130,6 +198,27 @@ def build_parser() -> argparse.ArgumentParser:
         default=2,
         help="Numero anni precedenti da usare per il fallback stagionale",
     )
+    parser.add_argument(
+        "--no-scl",
+        action="store_true",
+        help="Non usa la maschera nuvole SCL: mediana diretta sulle scene (consigliato --max-items 6-8)",
+    )
+    parser.add_argument(
+        "--aoi-simplify-m",
+        type=float,
+        default=float(os.environ.get("MSIMNE_AOI_SIMPLIFY_M", "0")),
+        help="Semplifica il poligono AOI per mosaico e controlli (metri, es. 5 = mezzo pixel S2); 0 = originale",
+    )
+    parser.add_argument("--tile-retries", type=int, default=4, help="Tentativi per tile prima di rimandarla al recupero finale")
+    parser.add_argument(
+        "--network-wait-max-seconds",
+        type=int,
+        default=1800,
+        help="Su errore di rete, attesa massima che Planetary Computer torni raggiungibile",
+    )
+    parser.add_argument("--http-timeout", type=int, default=60, help="Timeout HTTP (secondi) per STAC e letture COG")
+    parser.add_argument("--http-max-retry", type=int, default=8, help="Tentativi HTTP automatici (429/5xx/timeout)")
+    parser.add_argument("--skip-disk-check", action="store_true", help="Non controlla lo spazio disco prima di partire")
     parser.add_argument("--log-file", type=Path, help="File log esplicito")
     parser.add_argument("--interactive", action="store_true", help="Richiede regione e date in modo interattivo")
     parser.add_argument("--verbose", action="store_true", help="Abilita logging verboso")
@@ -257,6 +346,7 @@ def run_regions(settings: Settings, regions: list[str], start_dt: datetime, end_
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+    resolve_performance(args)
     set_gdal_env()
     settings = Settings(
         project_root=args.project_root.resolve(),
@@ -277,6 +367,15 @@ def main(argv: list[str] | None = None) -> int:
         intermediate_compression=args.intermediate_compression,
         seasonal_fallback_coverage_threshold=args.seasonal_fallback_coverage_threshold,
         seasonal_fallback_years=args.seasonal_fallback_years,
+        final_gdal_threads=args.final_gdal_threads or "",
+        final_parallel_mosaics=args.final_parallel_mosaics,
+        use_scl=not args.no_scl,
+        aoi_simplify_m=args.aoi_simplify_m,
+        tile_retries=args.tile_retries,
+        network_wait_max_seconds=args.network_wait_max_seconds,
+        http_timeout=args.http_timeout,
+        http_max_retry=args.http_max_retry,
+        check_disk_space=not args.skip_disk_check,
     )
     os.environ["GDAL_CACHEMAX"] = str(settings.gdal_cache_mb)
     settings.ensure_directories()
@@ -297,6 +396,24 @@ def main(argv: list[str] | None = None) -> int:
 
     if end_dt <= start_dt:
         parser.error("La data di fine deve essere successiva alla data di inizio.")
+
+    logging.getLogger(__name__).info(
+        "Parametri: profilo=%s workers=%s threads/worker=%s memoria=%s gdal_threads=%s final_gdal_threads=%s "
+        "warp_mb=%s tile_parallelism=%s mosaici_paralleli=%s scl=%s aoi_simplify_m=%s max_items=%s/%s",
+        args.profile or "nessuno",
+        settings.dask_workers,
+        settings.dask_threads_per_worker,
+        settings.dask_memory_limit,
+        settings.gdal_threads,
+        settings.final_gdal_threads,
+        settings.gdal_warp_memory_mb,
+        settings.tile_parallelism,
+        settings.final_parallel_mosaics,
+        "si" if settings.use_scl else "no",
+        settings.aoi_simplify_m,
+        settings.initial_max_items,
+        settings.max_items,
+    )
 
     if len(regions) == 1 and not args.all_regions:
         validate_runtime(settings, regions[0])

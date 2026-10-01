@@ -10,9 +10,11 @@ import planetary_computer
 import rasterio
 import xarray as xr
 from pystac_client import Client as StacClient
+from pystac_client.stac_api_io import StacApiIO
+from urllib3.util.retry import Retry
 
 from .config import Settings
-from .utils import NonRetryableError, retry
+from .utils import NonRetryableError
 
 LOGGER = logging.getLogger(__name__)
 
@@ -83,7 +85,24 @@ class StacItemCache:
 
 
 def open_catalog(settings: Settings) -> StacClient:
-    return StacClient.open(settings.stac_url)
+    http_retry = Retry(
+        total=settings.http_max_retry,
+        backoff_factor=settings.http_retry_delay,
+        status_forcelist=(429, 500, 502, 503, 504),
+        allowed_methods=None,
+        respect_retry_after_header=True,
+    )
+    stac_io = StacApiIO(timeout=settings.http_timeout, max_retries=http_retry)
+    return StacClient.open(settings.stac_url, stac_io=stac_io)
+
+
+def gdal_http_options(settings: Settings) -> dict[str, str]:
+    return {
+        "GDAL_HTTP_MAX_RETRY": str(settings.http_max_retry),
+        "GDAL_HTTP_RETRY_DELAY": str(settings.http_retry_delay),
+        "GDAL_HTTP_TIMEOUT": str(settings.http_timeout),
+        "GDAL_HTTP_CONNECTTIMEOUT": str(min(settings.http_timeout, 30)),
+    }
 
 
 def compute_valid_ratio(mask_bool: xr.DataArray) -> float:
@@ -96,7 +115,6 @@ def _normalize_ranges(rng: tuple[str, str] | Sequence[tuple[str, str]]) -> list[
     return list(rng)
 
 
-@retry(6, 30)
 def load_s2_median(
     catalog: StacClient,
     settings: Settings,
@@ -163,10 +181,9 @@ def load_s2_median(
 
         with rasterio.Env(
             GDAL_DISABLE_READDIR_ON_OPEN="EMPTY_DIR",
-            GDAL_HTTP_MAX_RETRY="5",
-            GDAL_HTTP_RETRY_DELAY="1",
             CPL_VSIL_CURL_NON_CACHED="1",
             CPL_VSIL_CURL_CACHE_SIZE="67108864",
+            **gdal_http_options(settings),
         ):
             ds = odc.stac.load(
                 signed_items,

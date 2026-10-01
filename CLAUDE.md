@@ -8,11 +8,19 @@ Pipeline Sentinel-2 (STAC → composite mensili per tile → mosaico NDVI/STACK 
 - Codice: `src/msimne/` (`pipeline.py` orchestrazione, `composite.py`, `stac.py`, `mosaic.py` GDAL, `quality.py` soglia copertura, `stats.py`, `config.py` default `Settings`).
 - Output in `outputs/`: `S2/{STACK,NDVI,STATS}`, `logs/run_<mese>_<regione>_<timestamp>.log`, `reports/`, `state/`, `working_s2/` (tile intermedie, svuotata a fine run riuscita).
 
-## Comando di riferimento (testato su R04)
+## Comandi di riferimento
 ```bash
-python 3.6.2.py --month 2026-07 --region R04 --workers 3 --threads-per-worker 1 --memory-limit 5GB --gdal-threads 2 --gdal-warp-memory-mb 512 --initial-max-items 6 --max-items 10 --intermediate-compression none --tile-parallelism 3
+# PC locale WSL (profilo equivalente ai parametri low-RAM che hanno completato R04)
+python 3.6.2.py --month 2026-07 --region R04 --profile wsl --aoi-simplify-m 5
+# VM cliente
+python 3.6.2.py --month 2026-07 --region R05 --profile vm --aoi-simplify-m 5
 ```
-La run è riprendibile: dopo Ctrl+C, rilanciando lo stesso comando le tile già presenti in `working_s2/` vengono saltate.
+- Precedenza parametri: esplicito > variabile d'ambiente `MSIMNE_*` > `--profile` > default storico (senza profilo restano i default VM grande: 16 worker, 16 thread GDAL, warp 16 GB).
+- Per i test usare sempre `--outputs-dir outputs_test/<nome>` (ignorato da git): con mosaici gia presenti la run salta l'elaborazione.
+- La run è riprendibile: dopo Ctrl+C rilanciando lo stesso comando le tile complete vengono saltate (tile e COG sono scritti come `.partial` e rinominati a fine scrittura) e anche i mosaici finali gia completi.
+- Opzioni aggiunte: `--no-scl` (con `--max-items 6-8`), `--aoi-simplify-m` (0 = poligono originale, output identici), `--final-gdal-threads`, `--final-parallel-mosaics`, `--tile-retries`, `--network-wait-max-seconds`, `--http-timeout`, `--http-max-retry`, `--skip-disk-check`.
+- A fine run il log riporta `Tempi fasi <regione>: ...` (tile, copertura_tile, mosaico_stack, mosaico_ndvi, controllo_copertura, statistiche).
+- Riferimenti locali per confronti pixel per pixel: `outputs_riferimento_R04_baseline/` (R04 codice base) e worktree `/home/ladisa/vegmon_baseline` (R12 codice base); script `outputs_test/confronta.py <rif> <test> <suffisso>`.
 
 ## Benchmark: R04 Al Qaseem, 2026-07 (completata 2026-10-01)
 - AOI 87.800 km², 200 tile; mosaico finale 41066×46820 px, EPSG:3857, 10 m.
@@ -25,8 +33,15 @@ La run è riprendibile: dopo Ctrl+C, rilanciando lo stesso comando le tile già 
 - Tentativi precedenti dello stesso giorno: le run del mattino (da PyCharm) morivano durante il mosaico GDAL senza traceback, probabilmente per OOM con i default tarati per la VM grande (`gdal-warp-memory-mb 16384`, `gdal-threads 16`, `workers 16`, `memory-limit 12GB`) su WSL da 15 GB. Con il profilo low-RAM sopra il mosaico regge. Alcune run sono fallite anche per errori DNS (`NameResolutionError`) verso il catalogo STAC.
 - Storico e parametri per la VM cliente: memorie Codex `~/.codex/memories/VEGMON.md` e `NCVC_VEG_MON.md`.
 
+## Benchmark: R12 Al Bahah, 2026-07 (2026-10-01, profilo wsl)
+- Codice base 12 min 57 s; codice branch `ottimizzazione-aoi-grandi` 11 min 50 s con output identici pixel per pixel (tile 10:58, mosaici 45 s, nessun ricalcolo critico inutile).
+- Il 30/09 con `--workers 4 --threads-per-worker 2 --tile-parallelism 4` R12 era durata 6 min 38 s: per regioni piccole il profilo wsl e' prudente.
+
 ## Note sul codice
-- Contatore di avanzamento in `pipeline.py`: il totale è `len(tiles)` (prima `len(tile_jobs)`, che dopo una ripresa mostrava ad es. `149/130`).
-- **Problema aperto**: `validate_existing_window` (`pipeline.py`) alla ripresa di una finestra con mosaici già presenti salta il controllo copertura e registra `valid_ratio` = 1.0 fisso, quindi una regione fallita per `failed_quality` risulta al 100% nel report.
-- Se la copertura NDVI è < 98%: `ValueError` → stato `failed_quality` (`cli.py`), i mosaici restano, il CSV non viene scritto, `working_s2/` non viene pulita.
-- Il gap-fill finale (`enable_final_gap_fill`) legge l'intero raster NDVI in RAM (~8–10 GB per una regione come R04) e con `gap_fill_max_search_distance = 0` non riempie nulla.
+- Requisiti decisi (2026-10-01): stesso codice per VM Windows e WSL, adattato dai parametri; priorita velocita e robustezza su AOI grandi; output con formato identico; **mai interpolare** (gap-fill rimosso).
+- Controllo copertura NDVI (`quality.ndvi_valid_ratio`): rasterizza l'AOI solo sui blocchi di bordo; risultato identico al vecchio metodo, su R05 la parte geometrica passa da ~73 min a secondi.
+- Se la copertura NDVI è < 98%: `ValueError` → stato `failed_quality` (`cli.py`), i mosaici restano, il CSV non viene scritto, `working_s2/` non viene pulita. Alla ripresa la copertura viene ricalcolata davvero.
+- Tile critiche: se il fallback stagionale e' gia stato fatto senza SCL (marker `.fallback_noscl`), la fase di copertura non la ricalcola (darebbe lo stesso risultato).
+- Una tile che fallisce dopo i tentativi non ferma la regione: viene ritentata da `ensure_full_grid_coverage`. Su errori di rete si attende che Planetary Computer torni raggiungibile.
+- In WSL il controllo spazio guarda anche Windows C: (il disco Linux e' un .vhdx su C:).
+- Da valutare: fallback stagionale che sostituisce l'intera tile invece dei soli buchi; scrittura diretta COG da gdalwarp; letture SCL ripetute per tile.

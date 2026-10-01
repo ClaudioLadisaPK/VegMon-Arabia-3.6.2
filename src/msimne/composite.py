@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import gc
 import logging
+import os
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
@@ -20,7 +21,7 @@ from pystac_client import Client as StacClient
 from .config import Settings
 from .io import intermediate_raster_options, save_stack_int16, set_scale_offset
 from .stac import InsufficientSclCoverage, StacItemCache, load_s2_median, open_catalog
-from .utils import get_tile_id, retry
+from .utils import call_with_retries, get_tile_id
 
 LOGGER = logging.getLogger(__name__)
 
@@ -66,11 +67,23 @@ def validate_raster_coverage(path: Path, nodata_val: int, min_valid_ratio: float
     return raster_coverage_ratio(path, nodata_val) >= min_valid_ratio
 
 
+def _partial_path(path: Path) -> Path:
+    return path.with_name(f"{path.stem}.partial{path.suffix}")
+
+
+def fallback_marker_path(paths: TilePaths) -> Path:
+    return paths.ndvi.with_name(f"{paths.ndvi.stem}.fallback_noscl")
+
+
 def build_tile_products(med: xr.Dataset, paths: TilePaths, settings: Settings, crs_to_use, crs_str: str) -> None:
+    # Scrittura su file .partial e rinomina finale: una tile interrotta a meta' non viene
+    # mai scambiata per completa alla ripresa (tile_outputs_exist controlla i nomi finali).
+    stack_tmp = _partial_path(paths.stack)
+    ndvi_tmp = _partial_path(paths.ndvi)
     save_stack_int16(
         med,
         ["B04", "B03", "B02", "B08"],
-        paths.stack,
+        stack_tmp,
         nodata=settings.ndvi_nodata,
         settings=settings,
         crs=crs_to_use,
@@ -90,8 +103,10 @@ def build_tile_products(med: xr.Dataset, paths: TilePaths, settings: Settings, c
     )
     ndvi_q.rio.write_nodata(settings.ndvi_nodata, encoded=True, inplace=True)
     ndvi_q.rio.write_crs(crs_to_use, inplace=True)
-    ndvi_q.rio.to_raster(paths.ndvi, dtype="int16", **intermediate_raster_options(settings))
-    set_scale_offset(paths.ndvi, scale=1 / 10000.0, offset=0.0)
+    ndvi_q.rio.to_raster(ndvi_tmp, dtype="int16", **intermediate_raster_options(settings))
+    set_scale_offset(ndvi_tmp, scale=1 / 10000.0, offset=0.0)
+    os.replace(stack_tmp, paths.stack)
+    os.replace(ndvi_tmp, paths.ndvi)
 
 
 def release_dask_collection(collection) -> None:
@@ -103,7 +118,13 @@ def release_dask_collection(collection) -> None:
 
 
 def remove_tile_products(paths: TilePaths) -> None:
-    for path in (paths.stack, paths.ndvi):
+    for path in (
+        paths.stack,
+        paths.ndvi,
+        _partial_path(paths.stack),
+        _partial_path(paths.ndvi),
+        fallback_marker_path(paths),
+    ):
         if path.exists():
             path.unlink()
 
@@ -176,7 +197,36 @@ def seasonal_fallback_ranges(start, end, years: int) -> list[tuple[str, str]]:
     ]
 
 
-@retry(6, 30)
+def compute_tile(
+    geom,
+    tile_id: str,
+    start,
+    end,
+    settings: Settings,
+    use_scl: bool = True,
+    catalog: StacClient | None = None,
+    item_cache: StacItemCache | None = None,
+    force: bool = False,
+) -> None:
+    call_with_retries(
+        compute_sentinel2_composite,
+        geom,
+        tile_id,
+        start,
+        end,
+        settings,
+        use_scl=use_scl,
+        catalog=catalog,
+        item_cache=item_cache,
+        force=force,
+        attempts=settings.tile_retries,
+        delay_seconds=settings.retry_delay_seconds,
+        label=f"tile {tile_id}",
+        network_url=settings.stac_url,
+        network_wait_seconds=settings.network_wait_max_seconds,
+    )
+
+
 def compute_sentinel2_composite(
     geom,
     tile_id: str,
@@ -265,6 +315,10 @@ def compute_sentinel2_composite(
         return
     fallback_coverage = raster_coverage_ratio(paths.ndvi, settings.ndvi_nodata)
     LOGGER.info("Tile %s copertura dopo fallback stagionale: %.2f%%", tile_id, fallback_coverage * 100)
+    if not use_scl:
+        # Il ricalcolo "critico" in ensure_full_grid_coverage (senza SCL, force) ripeterebbe
+        # esattamente questo percorso con gli stessi dati: il marker permette di saltarlo.
+        fallback_marker_path(paths).touch()
 
 
 def tile_coverage_in_aoi(ndvi_fp: Path, tile_geom, aoi_union, nodata_val: int) -> float:
@@ -294,6 +348,10 @@ def ensure_full_grid_coverage(
     base = f"{wstart:%Y%m%d}_{wend:%Y%m%d}"
     aoi_union = aoi.geometry.unary_union
     attempted_critical: set[str] = set()
+    for _, tile in tiles_gdf.iterrows():
+        tid = get_tile_id(tile.geometry)
+        if fallback_marker_path(build_tile_paths(settings, tid, base)).exists():
+            attempted_critical.add(tid)
     for loop_idx in range(1, settings.max_coverage_loops + 1):
         missing = []
         critical_coverage = []
@@ -334,7 +392,7 @@ def ensure_full_grid_coverage(
             LOGGER.info("Ricalcolo tile critica %s con fallback stagionale (copertura %.2f%%)", tid, ratio * 100)
             attempted_critical.add(tid)
             remove_tile_products(build_tile_paths(settings, tid, base))
-            compute_sentinel2_composite(
+            compute_tile(
                 geom,
                 tid,
                 wstart.date(),
@@ -347,7 +405,7 @@ def ensure_full_grid_coverage(
             )
         for tid, geom, ratio in missing:
             LOGGER.info("Ricalcolo tile mancante %s senza SCL (copertura %.2f%%)", tid, ratio * 100)
-            compute_sentinel2_composite(
+            compute_tile(
                 geom,
                 tid,
                 wstart.date(),

@@ -32,6 +32,9 @@ def mosaic_export(
     output_dir.mkdir(parents=True, exist_ok=True)
     stem = Path(output_name).stem
     out_fp = output_dir / output_name
+    # Il COG viene scritto con un nome provvisorio e rinominato solo a fine conversione:
+    # un file finale presente e' quindi sempre completo (serve alla ripresa della fase finale).
+    partial_fp = output_dir / f"{stem}.partial.tif"
     tmp_fp = settings.work_dir / f"_tmp_{stem}.tif"
     vrt_fp = settings.work_dir / f"_tmp_{stem}.vrt"
     list_fp = settings.work_dir / f"_tmp_{stem}_list.txt"
@@ -68,7 +71,7 @@ def mosaic_export(
         "-multi",
         "--config",
         "GDAL_NUM_THREADS",
-        settings.gdal_threads,
+        settings.final_gdal_threads,
         "-wm",
         f"{settings.gdal_warp_memory_mb}MB",
         "-co",
@@ -112,7 +115,7 @@ def mosaic_export(
             "-co",
             "PREDICTOR=2",
             "-co",
-            f"NUM_THREADS={settings.gdal_threads}",
+            f"NUM_THREADS={settings.final_gdal_threads}",
             "-co",
             "OVERVIEWS=AUTO",
             "-co",
@@ -124,10 +127,11 @@ def mosaic_export(
             "-ot",
             dtype,
             tmp_fp.as_posix(),
-            out_fp.as_posix(),
+            partial_fp.as_posix(),
         ],
         settings,
     )
+    os.replace(partial_fp, out_fp)
 
     for path in (list_fp, vrt_fp, tmp_fp):
         if path.exists():

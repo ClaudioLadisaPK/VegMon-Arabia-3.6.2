@@ -67,8 +67,17 @@ class Settings:
     gdal_threads: str = "16"
     gdal_warp_memory_mb: int = 16384
     gdal_cache_mb: int = 4096
-    gap_fill_max_search_distance: float = 0.0
-    enable_final_gap_fill: bool = False
+    final_gdal_threads: str = ""
+    final_parallel_mosaics: int = 1
+    use_scl: bool = True
+    aoi_simplify_m: float = 0.0
+    tile_retries: int = 4
+    retry_delay_seconds: int = 30
+    network_wait_max_seconds: int = 1800
+    http_timeout: int = 60
+    http_max_retry: int = 8
+    http_retry_delay: int = 2
+    check_disk_space: bool = True
 
     def __post_init__(self) -> None:
         if self.max_items < 1:
@@ -76,6 +85,10 @@ class Settings:
         if self.initial_max_items < 1 or self.initial_max_items > self.max_items:
             self.initial_max_items = self.max_items
         self.tile_parallelism = max(1, self.tile_parallelism)
+        self.final_gdal_threads = str(self.final_gdal_threads or self.gdal_threads)
+        self.final_parallel_mosaics = max(1, min(2, self.final_parallel_mosaics))
+        self.tile_retries = max(1, self.tile_retries)
+        self.aoi_simplify_m = max(0.0, self.aoi_simplify_m)
         self.intermediate_compression = self.intermediate_compression.upper()
         if self.intermediate_compression not in {"NONE", "DEFLATE", "LZW"}:
             raise ValueError("intermediate_compression deve essere uno tra: none, deflate, lzw")
