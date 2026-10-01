@@ -49,6 +49,9 @@ class Settings:
     stac_url: str = "https://planetarycomputer.microsoft.com/api/stac/v1"
     resolution: int = 10
     max_items: int = 10
+    initial_max_items: int = 6
+    tile_parallelism: int = 1
+    intermediate_compression: str = "none"
     min_valid_ratio: float = 0.95
     coverage_threshold: float = 0.99
     final_ndvi_valid_ratio: float = 0.98
@@ -67,6 +70,14 @@ class Settings:
     enable_final_gap_fill: bool = False
 
     def __post_init__(self) -> None:
+        if self.max_items < 1:
+            raise ValueError("max_items deve essere >= 1")
+        if self.initial_max_items < 1 or self.initial_max_items > self.max_items:
+            self.initial_max_items = self.max_items
+        self.tile_parallelism = max(1, self.tile_parallelism)
+        self.intermediate_compression = self.intermediate_compression.upper()
+        if self.intermediate_compression not in {"NONE", "DEFLATE", "LZW"}:
+            raise ValueError("intermediate_compression deve essere uno tra: none, deflate, lzw")
         self.inputs_dir = (self.inputs_dir_override or (self.project_root / "inputs")).resolve()
         self.regions_dir = self.inputs_dir / "regions"
         self.grids_dir = self.inputs_dir / "grids"

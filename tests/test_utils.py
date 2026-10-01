@@ -24,6 +24,9 @@ def test_settings_defaults(tmp_path: Path):
     settings = Settings(project_root=tmp_path)
     assert settings.inputs_dir == tmp_path / "inputs"
     assert settings.resolve_grid_file() == tmp_path / "inputs" / "grids" / "ARAB_GRIGLIA.geojson"
+    assert settings.initial_max_items == 6
+    assert settings.tile_parallelism == 1
+    assert settings.intermediate_compression == "NONE"
 
 
 def test_settings_work_dir_override(tmp_path: Path):
@@ -31,6 +34,19 @@ def test_settings_work_dir_override(tmp_path: Path):
     settings = Settings(project_root=tmp_path, outputs_dir_override=tmp_path / "outputs", work_dir_override=work_dir)
     assert settings.outputs_dir == tmp_path / "outputs"
     assert settings.work_dir == work_dir
+
+
+def test_settings_performance_normalization(tmp_path: Path):
+    settings = Settings(
+        project_root=tmp_path,
+        max_items=4,
+        initial_max_items=10,
+        tile_parallelism=0,
+        intermediate_compression="deflate",
+    )
+    assert settings.initial_max_items == 4
+    assert settings.tile_parallelism == 1
+    assert settings.intermediate_compression == "DEFLATE"
 
 
 def test_previous_month_window():

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import shutil
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -18,7 +19,7 @@ from .composite import compute_sentinel2_composite, ensure_full_grid_coverage
 from .config import REGION_NAMES, Settings
 from .mosaic import mosaic_export
 from .quality import NdviQuality, validate_and_fill_ndvi
-from .stac import open_catalog
+from .stac import StacItemCache, open_catalog
 from .stats import classify_stats
 from .utils import VALID_CODES, get_tile_id, monthly_windows
 
@@ -99,6 +100,7 @@ def run_pipeline(settings: Settings, code: str, start_dt, end_dt) -> list[Window
     )
     odc.stac.configure_rio(cloud_defaults=True, client=client)
     catalog = open_catalog(settings)
+    item_cache = StacItemCache(catalog, settings, tiles.to_crs("EPSG:4326").total_bounds)
     results: list[WindowResult] = []
 
     try:
@@ -108,20 +110,21 @@ def run_pipeline(settings: Settings, code: str, start_dt, end_dt) -> list[Window
                 results.append(validate_existing_window(settings, aoi, code, wstart, wend, same_month))
                 continue
             LOGGER.info("Finestra %s/%s %s -> %s", widx, len(windows), wstart.date(), wend.date())
-            tile_rows = _progress(list(tiles.iterrows()), total=len(tiles), desc=f"Tile {wstart:%Y-%m}")
-            for pos, (_, tile) in enumerate(tile_rows, start=1):
-                tid = get_tile_id(tile.geometry)
-                LOGGER.info("Tile %s (%s/%s)", tid, pos, len(tiles))
-                compute_sentinel2_composite(
-                    tile.geometry,
-                    tid,
-                    wstart.date(),
-                    wend.date(),
-                    settings,
-                    use_scl=True,
-                    catalog=catalog,
-                )
-            ensure_full_grid_coverage(tiles, aoi, wstart, wend, settings, catalog=catalog)
+            tile_jobs = [(pos, tile.geometry) for pos, (_, tile) in enumerate(tiles.iterrows(), start=1)]
+            if settings.tile_parallelism <= 1:
+                tile_rows = _progress(tile_jobs, total=len(tile_jobs), desc=f"Tile {wstart:%Y-%m}")
+                for pos, geom in tile_rows:
+                    run_tile_job(settings, catalog, item_cache, geom, wstart, wend, pos, len(tile_jobs))
+            else:
+                LOGGER.info("Elaborazione tile in parallelo: parallelism=%s", settings.tile_parallelism)
+                with ThreadPoolExecutor(max_workers=settings.tile_parallelism) as executor:
+                    futures = [
+                        executor.submit(run_tile_job, settings, catalog, item_cache, geom, wstart, wend, pos, len(tile_jobs))
+                        for pos, geom in tile_jobs
+                    ]
+                    for future in _progress(as_completed(futures), total=len(futures), desc=f"Tile {wstart:%Y-%m}"):
+                        future.result()
+            ensure_full_grid_coverage(tiles, aoi, wstart, wend, settings, catalog=catalog, item_cache=item_cache)
             results.append(build_outputs_for_window(settings, aoi, tiles, code, wstart, wend, same_month))
     finally:
         try:
@@ -131,6 +134,30 @@ def run_pipeline(settings: Settings, code: str, start_dt, end_dt) -> list[Window
 
     cleanup_workdir(settings)
     return results
+
+
+def run_tile_job(
+    settings: Settings,
+    catalog,
+    item_cache: StacItemCache,
+    geom,
+    wstart,
+    wend,
+    pos: int,
+    total: int,
+) -> None:
+    tid = get_tile_id(geom)
+    LOGGER.info("Tile %s (%s/%s)", tid, pos, total)
+    compute_sentinel2_composite(
+        geom,
+        tid,
+        wstart.date(),
+        wend.date(),
+        settings,
+        use_scl=True,
+        catalog=catalog,
+        item_cache=item_cache,
+    )
 
 
 def validate_existing_window(settings: Settings, aoi, code: str, wstart, wend, same_month: bool) -> WindowResult:

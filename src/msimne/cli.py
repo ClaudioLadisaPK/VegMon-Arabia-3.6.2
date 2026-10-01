@@ -23,6 +23,11 @@ def env_path(name: str) -> Path | None:
     return Path(value) if value else None
 
 
+def env_int(name: str, default: int) -> int:
+    value = os.environ.get(name)
+    return int(value) if value else default
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="MSIMNE Sentinel-2 NDVI pipeline")
     parser.add_argument(
@@ -67,13 +72,46 @@ def build_parser() -> argparse.ArgumentParser:
         default=env_path("MSIMNE_GRID_FILE"),
         help="Override del file griglia o MSIMNE_GRID_FILE",
     )
-    parser.add_argument("--workers", type=int, default=16, help="Numero worker Dask")
-    parser.add_argument("--threads-per-worker", type=int, default=2, help="Thread per worker Dask")
-    parser.add_argument("--memory-limit", default="12GB", help="Limite memoria per worker Dask")
-    parser.add_argument("--gdal-threads", default="16", help="Thread GDAL per warp/COG")
-    parser.add_argument("--gdal-warp-memory-mb", type=int, default=16384, help="Memoria gdalwarp in MB")
+    parser.add_argument("--workers", type=int, default=env_int("MSIMNE_WORKERS", 16), help="Numero worker Dask")
+    parser.add_argument(
+        "--threads-per-worker",
+        type=int,
+        default=env_int("MSIMNE_THREADS_PER_WORKER", 2),
+        help="Thread per worker Dask",
+    )
+    parser.add_argument("--memory-limit", default=os.environ.get("MSIMNE_MEMORY_LIMIT", "12GB"), help="Limite memoria per worker Dask")
+    parser.add_argument("--gdal-threads", default=os.environ.get("MSIMNE_GDAL_THREADS", "16"), help="Thread GDAL per warp/COG")
+    parser.add_argument(
+        "--gdal-warp-memory-mb",
+        type=int,
+        default=env_int("MSIMNE_GDAL_WARP_MEMORY_MB", 16384),
+        help="Memoria gdalwarp in MB",
+    )
     parser.add_argument("--gdal-timeout", type=int, default=14400, help="Timeout comandi GDAL in secondi")
-    parser.add_argument("--max-items", type=int, default=10, help="Numero massimo scene Sentinel-2 per tile/mese")
+    parser.add_argument(
+        "--max-items",
+        type=int,
+        default=env_int("MSIMNE_MAX_ITEMS", 10),
+        help="Numero massimo scene Sentinel-2 per tile/mese",
+    )
+    parser.add_argument(
+        "--initial-max-items",
+        type=int,
+        default=env_int("MSIMNE_INITIAL_MAX_ITEMS", 6),
+        help="Scene iniziali da provare prima di salire a --max-items",
+    )
+    parser.add_argument(
+        "--tile-parallelism",
+        type=int,
+        default=env_int("MSIMNE_TILE_PARALLELISM", 1),
+        help="Numero tile da elaborare in parallelo; aumentare con prudenza",
+    )
+    parser.add_argument(
+        "--intermediate-compression",
+        choices=("none", "deflate", "lzw"),
+        default=os.environ.get("MSIMNE_INTERMEDIATE_COMPRESSION", "none").lower(),
+        help="Compressione GeoTIFF temporanei in working_s2",
+    )
     parser.add_argument(
         "--seasonal-fallback-coverage-threshold",
         type=float,
@@ -227,6 +265,9 @@ def main(argv: list[str] | None = None) -> int:
         gdal_warp_memory_mb=args.gdal_warp_memory_mb,
         gdal_timeout=args.gdal_timeout,
         max_items=args.max_items,
+        initial_max_items=args.initial_max_items,
+        tile_parallelism=args.tile_parallelism,
+        intermediate_compression=args.intermediate_compression,
         seasonal_fallback_coverage_threshold=args.seasonal_fallback_coverage_threshold,
         seasonal_fallback_years=args.seasonal_fallback_years,
     )

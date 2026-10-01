@@ -12,6 +12,10 @@ LOGGER = logging.getLogger(__name__)
 VALID_CODES = {f"R{i:02d}" for i in range(1, 14)}
 
 
+class NonRetryableError(Exception):
+    pass
+
+
 def parse_date(value: str) -> dt.datetime:
     value = value.strip()
     for fmt in ("%Y-%m-%d", "%Y-%m"):
@@ -68,6 +72,8 @@ def retry(times: int, delay_seconds: int):
             for attempt in range(times):
                 try:
                     return func(*args, **kwargs)
+                except NonRetryableError:
+                    raise
                 except Exception as exc:  # pragma: no cover
                     last_err = exc
                     if attempt >= times - 1:

@@ -282,6 +282,9 @@ export MSIMNE_INPUTS_DIR=/path/to/inputs
 export MSIMNE_OUTPUTS_DIR=/path/to/outputs
 export MSIMNE_WORK_DIR=/path/to/scratch/working_s2
 export MSIMNE_GRID_FILE=/path/to/inputs/grids/ARAB_GRIGLIA.geojson
+export MSIMNE_INTERMEDIATE_COMPRESSION=none
+export MSIMNE_INITIAL_MAX_ITEMS=6
+export MSIMNE_TILE_PARALLELISM=1
 ```
 
 ## Barra di avanzamento
@@ -355,17 +358,32 @@ python 3.6.2.py \
   --threads-per-worker 2 \
   --memory-limit 6GB \
   --gdal-threads 4 \
-  --gdal-warp-memory-mb 4096
+  --gdal-warp-memory-mb 4096 \
+  --initial-max-items 6 \
+  --max-items 10 \
+  --intermediate-compression none \
+  --tile-parallelism 1
 ```
 
 Se la macchina Lightning ha piu RAM e CPU, aumentare gradualmente `--workers`, `--memory-limit`,
-`--gdal-threads` e `--gdal-warp-memory-mb`.
+`--gdal-threads`, `--gdal-warp-memory-mb` e poi `--tile-parallelism`.
+
+Per accelerare una regione grande senza togliere lo stack multispettrale:
+
+- `--initial-max-items 6 --max-items 10` prova prima le 6 scene migliori e sale a 10 solo se serve.
+- `--intermediate-compression none` evita compressione CPU-intensive sui GeoTIFF temporanei in `working_s2`.
+- `--tile-parallelism 2` puo elaborare due tile insieme, ma va usato solo se RAM, disco e rete reggono.
+
+Gli output finali in `outputs/S2/STACK`, `outputs/S2/NDVI` e `outputs/S2/STATS` restano prodotti.
 
 Per usare variabili ambiente invece degli argomenti:
 
 ```bash
 export MSIMNE_OUTPUTS_DIR=/teamspace/studios/this_studio/outputs
 export MSIMNE_WORK_DIR=/teamspace/studios/this_studio/scratch/working_s2
+export MSIMNE_INTERMEDIATE_COMPRESSION=none
+export MSIMNE_INITIAL_MAX_ITEMS=6
+export MSIMNE_TILE_PARALLELISM=1
 python 3.6.2.py --next-pending-month --from-month 2026-03 --all-regions
 ```
 

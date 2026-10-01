@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from enum import Enum
 from pathlib import Path
 
 import geopandas as gpd
@@ -16,8 +17,8 @@ from rasterio.warp import Resampling
 from pystac_client import Client as StacClient
 
 from .config import Settings
-from .io import save_stack_int16, set_scale_offset
-from .stac import load_s2_median, open_catalog
+from .io import intermediate_raster_options, save_stack_int16, set_scale_offset
+from .stac import InsufficientSclCoverage, StacItemCache, load_s2_median, open_catalog
 from .utils import get_tile_id, retry
 
 LOGGER = logging.getLogger(__name__)
@@ -27,7 +28,12 @@ LOGGER = logging.getLogger(__name__)
 class TilePaths:
     stack: Path
     ndvi: Path
-    binary: Path
+
+
+class TileBuildStatus(str, Enum):
+    BUILT = "built"
+    NO_DATA = "no_data"
+    LOW_SCL = "low_scl"
 
 
 def q16_signed(a, scale=10000.0, nodata=-999):
@@ -43,7 +49,6 @@ def build_tile_paths(settings: Settings, tile_id: str, base: str) -> TilePaths:
     return TilePaths(
         stack=out_dir / f"stack_{base}.tif",
         ndvi=out_dir / f"ndvi_{base}.tif",
-        binary=out_dir / f"ndvi_bin_{base}.tif",
     )
 
 
@@ -61,7 +66,14 @@ def validate_raster_coverage(path: Path, nodata_val: int, min_valid_ratio: float
 
 
 def build_tile_products(med: xr.Dataset, paths: TilePaths, settings: Settings, crs_to_use, crs_str: str) -> None:
-    save_stack_int16(med, ["B04", "B03", "B02", "B08"], paths.stack, nodata=settings.ndvi_nodata, crs=crs_to_use)
+    save_stack_int16(
+        med,
+        ["B04", "B03", "B02", "B08"],
+        paths.stack,
+        nodata=settings.ndvi_nodata,
+        settings=settings,
+        crs=crs_to_use,
+    )
 
     red = med["B04"].astype("float32")
     nir = med["B08"].astype("float32")
@@ -77,19 +89,12 @@ def build_tile_products(med: xr.Dataset, paths: TilePaths, settings: Settings, c
     )
     ndvi_q.rio.write_nodata(settings.ndvi_nodata, encoded=True, inplace=True)
     ndvi_q.rio.write_crs(crs_to_use, inplace=True)
-    ndvi_q.rio.to_raster(paths.ndvi, compress="DEFLATE", predictor=2, dtype="int16")
+    ndvi_q.rio.to_raster(paths.ndvi, dtype="int16", **intermediate_raster_options(settings))
     set_scale_offset(paths.ndvi, scale=1 / 10000.0, offset=0.0)
-
-    veg = xr.where(np.isfinite(ndvi), xr.where(ndvi >= settings.ndvi_threshold, 1, 0), settings.ndvi_nodata).astype(
-        np.int16
-    )
-    veg.rio.write_nodata(settings.ndvi_nodata, encoded=True, inplace=True)
-    veg.rio.write_crs(crs_to_use, inplace=True)
-    veg.rio.to_raster(paths.binary, compress="DEFLATE", predictor=2, dtype="int16")
 
 
 def remove_tile_products(paths: TilePaths) -> None:
-    for path in (paths.stack, paths.ndvi, paths.binary):
+    for path in (paths.stack, paths.ndvi):
         if path.exists():
             path.unlink()
 
@@ -102,7 +107,8 @@ def build_tile_for_range(
     settings: Settings,
     use_scl: bool,
     catalog: StacClient,
-) -> bool:
+    item_cache: StacItemCache | None = None,
+) -> TileBuildStatus:
     return build_tile_for_ranges(
         geom,
         paths,
@@ -110,6 +116,7 @@ def build_tile_for_range(
         settings,
         use_scl=use_scl,
         catalog=catalog,
+        item_cache=item_cache,
     )
 
 
@@ -120,11 +127,23 @@ def build_tile_for_ranges(
     settings: Settings,
     use_scl: bool,
     catalog: StacClient,
-) -> bool:
+    item_cache: StacItemCache | None = None,
+) -> TileBuildStatus:
     geom_wgs84 = gpd.GeoSeries([geom], crs=settings.final_mosaic_crs).to_crs("EPSG:4326").iloc[0]
-    med = load_s2_median(catalog, settings, geom_wgs84, ranges, settings.final_mosaic_crs, use_scl=use_scl)
+    try:
+        med = load_s2_median(
+            catalog,
+            settings,
+            geom_wgs84,
+            ranges,
+            settings.final_mosaic_crs,
+            use_scl=use_scl,
+            item_cache=item_cache,
+        )
+    except InsufficientSclCoverage:
+        return TileBuildStatus.LOW_SCL
     if med is None:
-        return False
+        return TileBuildStatus.NO_DATA
 
     med = med.persist()
     try:
@@ -135,7 +154,7 @@ def build_tile_for_ranges(
         crs_str = rasterio.crs.CRS.from_user_input(settings.final_mosaic_crs).to_string()
 
     build_tile_products(med, paths, settings, crs_to_use, crs_str)
-    return True
+    return TileBuildStatus.BUILT
 
 
 def seasonal_fallback_ranges(start, end, years: int) -> list[tuple[str, str]]:
@@ -154,16 +173,41 @@ def compute_sentinel2_composite(
     settings: Settings,
     use_scl: bool = True,
     catalog: StacClient | None = None,
+    item_cache: StacItemCache | None = None,
     force: bool = False,
 ) -> None:
     base = f"{start:%Y%m%d}_{end:%Y%m%d}"
     paths = build_tile_paths(settings, tile_id, base)
-    if not force and all(path.exists() for path in (paths.stack, paths.ndvi, paths.binary)) and use_scl:
+    if not force and all(path.exists() for path in (paths.stack, paths.ndvi)) and use_scl:
         LOGGER.info("Tile %s gia elaborato per %s", tile_id, base)
         return
 
     catalog = catalog or open_catalog(settings)
-    if not build_tile_for_range(geom, paths, start, end, settings, use_scl=use_scl, catalog=catalog):
+    status = build_tile_for_range(
+        geom,
+        paths,
+        start,
+        end,
+        settings,
+        use_scl=use_scl,
+        catalog=catalog,
+        item_cache=item_cache,
+    )
+    if status == TileBuildStatus.LOW_SCL and use_scl:
+        LOGGER.info("Copertura SCL insufficiente per %s, rigenero direttamente senza SCL", tile_id)
+        remove_tile_products(paths)
+        compute_sentinel2_composite(
+            geom,
+            tile_id,
+            start,
+            end,
+            settings,
+            use_scl=False,
+            catalog=catalog,
+            item_cache=item_cache,
+        )
+        return
+    if status != TileBuildStatus.BUILT:
         LOGGER.warning("Nessun dataset valido per %s %s", tile_id, base)
         return
 
@@ -171,7 +215,16 @@ def compute_sentinel2_composite(
     if use_scl and coverage < settings.min_valid_ratio:
         LOGGER.info("Copertura insufficiente per %s, rigenero senza SCL", tile_id)
         remove_tile_products(paths)
-        compute_sentinel2_composite(geom, tile_id, start, end, settings, use_scl=False, catalog=catalog)
+        compute_sentinel2_composite(
+            geom,
+            tile_id,
+            start,
+            end,
+            settings,
+            use_scl=False,
+            catalog=catalog,
+            item_cache=item_cache,
+        )
         return
 
     if coverage >= settings.seasonal_fallback_coverage_threshold:
@@ -186,7 +239,16 @@ def compute_sentinel2_composite(
         ", ".join(f"{rng[0]}->{rng[1]}" for rng in fallback_ranges),
     )
     remove_tile_products(paths)
-    if not build_tile_for_ranges(geom, paths, fallback_ranges, settings, use_scl=False, catalog=catalog):
+    status = build_tile_for_ranges(
+        geom,
+        paths,
+        fallback_ranges,
+        settings,
+        use_scl=False,
+        catalog=catalog,
+        item_cache=item_cache,
+    )
+    if status != TileBuildStatus.BUILT:
         LOGGER.warning("Fallback stagionale senza dataset valido per %s %s", tile_id, base)
         return
     fallback_coverage = raster_coverage_ratio(paths.ndvi, settings.ndvi_nodata)
@@ -215,6 +277,7 @@ def ensure_full_grid_coverage(
     wend,
     settings: Settings,
     catalog: StacClient | None = None,
+    item_cache: StacItemCache | None = None,
 ) -> None:
     base = f"{wstart:%Y%m%d}_{wend:%Y%m%d}"
     aoi_union = aoi.geometry.unary_union
@@ -267,8 +330,18 @@ def ensure_full_grid_coverage(
                 settings,
                 use_scl=False,
                 catalog=catalog,
+                item_cache=item_cache,
                 force=True,
             )
         for tid, geom, ratio in missing:
             LOGGER.info("Ricalcolo tile mancante %s senza SCL (copertura %.2f%%)", tid, ratio * 100)
-            compute_sentinel2_composite(geom, tid, wstart.date(), wend.date(), settings, use_scl=False, catalog=catalog)
+            compute_sentinel2_composite(
+                geom,
+                tid,
+                wstart.date(),
+                wend.date(),
+                settings,
+                use_scl=False,
+                catalog=catalog,
+                item_cache=item_cache,
+            )

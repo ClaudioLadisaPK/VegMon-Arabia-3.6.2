@@ -47,7 +47,17 @@ def set_scale_offset(path: Path, scale: float, offset: float = 0.0) -> None:
         dst.offsets = tuple([offset] * dst.count)
 
 
-def save_stack_int16(xarr: xr.Dataset, bands: list[str], path: Path, nodata: int, crs=None) -> None:
+def intermediate_raster_options(settings: Settings) -> dict[str, object]:
+    compression = settings.intermediate_compression.upper()
+    if compression == "NONE":
+        return {}
+    options: dict[str, object] = {"compress": compression}
+    if compression in {"DEFLATE", "LZW"}:
+        options["predictor"] = 2
+    return options
+
+
+def save_stack_int16(xarr: xr.Dataset, bands: list[str], path: Path, nodata: int, settings: Settings, crs=None) -> None:
     stack = xr.concat([xarr[b].astype("float32") for b in bands], dim="band").transpose("band", "y", "x")
     stack = stack.where(np.isfinite(stack)).clip(0, 10000)
     stack_rounded = xr.apply_ufunc(np.rint, stack, dask="parallelized", output_dtypes=[np.float32])
@@ -55,7 +65,7 @@ def save_stack_int16(xarr: xr.Dataset, bands: list[str], path: Path, nodata: int
     if crs is not None:
         stack_i16.rio.write_crs(crs, inplace=True)
     stack_i16.rio.write_nodata(nodata, encoded=True, inplace=True)
-    stack_i16.rio.to_raster(path, compress="DEFLATE", predictor=2, dtype="int16")
+    stack_i16.rio.to_raster(path, dtype="int16", **intermediate_raster_options(settings))
 
 
 def convert_to_cog(path: Path, settings: Settings, nodata: int, dtype: str = "Int16", crs: str | None = None) -> None:
