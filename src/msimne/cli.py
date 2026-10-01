@@ -28,30 +28,38 @@ def env_int(name: str, default: int) -> int:
     return int(value) if value else default
 
 
-# Profili macchina: valori di partenza per i parametri di performance.
+# Profili macchina: valori di partenza per i parametri di performance, separati per fase.
+# Fase tile: download STAC + composite (Dask). Fase mosaico: GDAL dopo la chiusura di Dask.
 # Ordine di precedenza: parametro esplicito > variabile d'ambiente > profilo > default storico.
 BASE_PERFORMANCE = {
+    # fase tile
     "workers": 16,
     "threads_per_worker": 2,
     "memory_limit": "12GB",
-    "gdal_threads": "16",
-    "gdal_warp_memory_mb": 16384,
-    "gdal_cache_mb": 4096,
     "tile_parallelism": 1,
+    "tile_gdal_cache_mb": None,
+    # fase mosaico
+    "gdal_threads": "16",
     "final_gdal_threads": None,
+    "gdal_warp_memory_mb": 16384,
+    "final_gdal_cache_mb": None,
     "final_parallel_mosaics": 1,
+    # default comune delle due cache GDAL se non specificate per fase
+    "gdal_cache_mb": 4096,
 }
 PROFILES = {
-    # PC locale WSL ~15 GB RAM / 8 core: profilo che ha completato R04 2026-07.
+    # PC locale WSL ~15 GB RAM / 8 core. La fase mosaico resta sui valori che hanno
+    # completato R04 2026-07 (il crash era in COG/overview con thread e cache GDAL alti).
     "wsl": {
         "workers": 3,
         "threads_per_worker": 1,
         "memory_limit": "5GB",
-        "gdal_threads": "2",
-        "gdal_warp_memory_mb": 512,
-        "gdal_cache_mb": 4096,
         "tile_parallelism": 3,
-        "final_gdal_threads": "6",
+        "tile_gdal_cache_mb": 1024,
+        "gdal_threads": "2",
+        "final_gdal_threads": "4",
+        "gdal_warp_memory_mb": 512,
+        "final_gdal_cache_mb": 4096,
         "final_parallel_mosaics": 1,
     },
     # VM cliente NCVC: 72 vCPU, 240 GB RAM.
@@ -59,11 +67,12 @@ PROFILES = {
         "workers": 12,
         "threads_per_worker": 2,
         "memory_limit": "12GB",
-        "gdal_threads": "2",
-        "gdal_warp_memory_mb": 8192,
-        "gdal_cache_mb": 4096,
         "tile_parallelism": 8,
+        "tile_gdal_cache_mb": 2048,
+        "gdal_threads": "2",
         "final_gdal_threads": "16",
+        "gdal_warp_memory_mb": 8192,
+        "final_gdal_cache_mb": 8192,
         "final_parallel_mosaics": 2,
     },
 }
@@ -74,6 +83,8 @@ PERFORMANCE_ENV = {
     "gdal_threads": ("MSIMNE_GDAL_THREADS", str),
     "gdal_warp_memory_mb": ("MSIMNE_GDAL_WARP_MEMORY_MB", int),
     "gdal_cache_mb": ("MSIMNE_GDAL_CACHE_MB", int),
+    "tile_gdal_cache_mb": ("MSIMNE_TILE_GDAL_CACHE_MB", int),
+    "final_gdal_cache_mb": ("MSIMNE_FINAL_GDAL_CACHE_MB", int),
     "tile_parallelism": ("MSIMNE_TILE_PARALLELISM", int),
     "final_gdal_threads": ("MSIMNE_FINAL_GDAL_THREADS", str),
     "final_parallel_mosaics": ("MSIMNE_FINAL_PARALLEL_MOSAICS", int),
@@ -143,24 +154,51 @@ def build_parser() -> argparse.ArgumentParser:
         default=os.environ.get("MSIMNE_PROFILE") or None,
         help="Profilo macchina (wsl = PC locale ~15 GB, vm = VM cliente); i parametri espliciti hanno precedenza",
     )
-    parser.add_argument("--workers", type=int, default=None, help="Numero worker Dask")
-    parser.add_argument("--threads-per-worker", type=int, default=None, help="Thread per worker Dask")
-    parser.add_argument("--memory-limit", default=None, help="Limite memoria per worker Dask")
-    parser.add_argument("--gdal-threads", default=None, help="Thread GDAL durante la fase tile")
-    parser.add_argument("--gdal-warp-memory-mb", type=int, default=None, help="Memoria gdalwarp in MB")
-    parser.add_argument("--gdal-cache-mb", type=int, default=None, help="GDAL_CACHEMAX in MB per processo")
-    parser.add_argument(
+    tile = parser.add_argument_group("Fase tile (download STAC + composite con Dask)")
+    tile.add_argument("--workers", type=int, default=None, help="Numero worker Dask")
+    tile.add_argument("--threads-per-worker", type=int, default=None, help="Thread per worker Dask")
+    tile.add_argument("--memory-limit", default=None, help="Limite memoria per worker Dask")
+    tile.add_argument(
+        "--tile-parallelism",
+        type=int,
+        default=None,
+        help="Numero tile da elaborare in parallelo",
+    )
+    tile.add_argument(
+        "--tile-gdal-cache-mb",
+        type=int,
+        default=None,
+        help="GDAL_CACHEMAX per ciascun worker Dask in MB; default = --gdal-cache-mb",
+    )
+    final = parser.add_argument_group("Fase mosaico (GDAL, dopo la chiusura di Dask)")
+    final.add_argument(
         "--final-gdal-threads",
         default=None,
-        help="Thread GDAL per mosaico/COG finali (Dask e' gia chiuso); default = --gdal-threads",
+        help="Thread GDAL per warp/COG/overview; default = --gdal-threads",
     )
-    parser.add_argument(
+    final.add_argument(
+        "--gdal-warp-memory-mb",
+        "--final-warp-memory-mb",
+        dest="gdal_warp_memory_mb",
+        type=int,
+        default=None,
+        help="Memoria gdalwarp in MB",
+    )
+    final.add_argument(
+        "--final-gdal-cache-mb",
+        type=int,
+        default=None,
+        help="GDAL_CACHEMAX dei comandi GDAL del mosaico in MB; default = --gdal-cache-mb",
+    )
+    final.add_argument(
         "--final-parallel-mosaics",
         type=int,
         choices=(1, 2),
         default=None,
-        help="2 = mosaici STACK e NDVI in parallelo (consigliato solo con molta RAM)",
+        help="2 = mosaici STACK e NDVI in parallelo (raddoppia la RAM del mosaico)",
     )
+    final.add_argument("--gdal-threads", default=None, help="Valore storico, usato come default di --final-gdal-threads")
+    parser.add_argument("--gdal-cache-mb", type=int, default=None, help="Default comune delle due cache GDAL (MB)")
     parser.add_argument("--gdal-timeout", type=int, default=14400, help="Timeout comandi GDAL in secondi")
     parser.add_argument(
         "--max-items",
@@ -173,12 +211,6 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=env_int("MSIMNE_INITIAL_MAX_ITEMS", 6),
         help="Scene iniziali da provare prima di salire a --max-items",
-    )
-    parser.add_argument(
-        "--tile-parallelism",
-        type=int,
-        default=None,
-        help="Numero tile da elaborare in parallelo; aumentare con prudenza",
     )
     parser.add_argument(
         "--intermediate-compression",
@@ -360,6 +392,8 @@ def main(argv: list[str] | None = None) -> int:
         gdal_threads=args.gdal_threads,
         gdal_warp_memory_mb=args.gdal_warp_memory_mb,
         gdal_cache_mb=args.gdal_cache_mb,
+        tile_gdal_cache_mb=args.tile_gdal_cache_mb or 0,
+        final_gdal_cache_mb=args.final_gdal_cache_mb or 0,
         gdal_timeout=args.gdal_timeout,
         max_items=args.max_items,
         initial_max_items=args.initial_max_items,
@@ -377,7 +411,7 @@ def main(argv: list[str] | None = None) -> int:
         http_max_retry=args.http_max_retry,
         check_disk_space=not args.skip_disk_check,
     )
-    os.environ["GDAL_CACHEMAX"] = str(settings.gdal_cache_mb)
+    os.environ["GDAL_CACHEMAX"] = str(settings.tile_gdal_cache_mb)
     settings.ensure_directories()
 
     has_window_arg = args.month or args.previous_month or args.next_pending_month or (args.start and args.end)
@@ -398,16 +432,18 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("La data di fine deve essere successiva alla data di inizio.")
 
     logging.getLogger(__name__).info(
-        "Parametri: profilo=%s workers=%s threads/worker=%s memoria=%s gdal_threads=%s final_gdal_threads=%s "
-        "warp_mb=%s tile_parallelism=%s mosaici_paralleli=%s scl=%s aoi_simplify_m=%s max_items=%s/%s",
+        "Parametri: profilo=%s | fase tile: workers=%s threads/worker=%s memoria=%s tile_parallelism=%s "
+        "gdal_cache_mb=%s | fase mosaico: final_gdal_threads=%s warp_mb=%s gdal_cache_mb=%s mosaici_paralleli=%s "
+        "| scl=%s aoi_simplify_m=%s max_items=%s/%s",
         args.profile or "nessuno",
         settings.dask_workers,
         settings.dask_threads_per_worker,
         settings.dask_memory_limit,
-        settings.gdal_threads,
+        settings.tile_parallelism,
+        settings.tile_gdal_cache_mb,
         settings.final_gdal_threads,
         settings.gdal_warp_memory_mb,
-        settings.tile_parallelism,
+        settings.final_gdal_cache_mb,
         settings.final_parallel_mosaics,
         "si" if settings.use_scl else "no",
         settings.aoi_simplify_m,

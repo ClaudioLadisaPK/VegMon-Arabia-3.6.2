@@ -14,7 +14,7 @@ from msimne.utils import call_with_retries, is_network_error
 
 
 def _parse(argv, monkeypatch):
-    for name in ("MSIMNE_WORKERS", "MSIMNE_TILE_PARALLELISM", "MSIMNE_PROFILE", "MSIMNE_FINAL_GDAL_THREADS"):
+    for name in ("MSIMNE_WORKERS", "MSIMNE_TILE_PARALLELISM", "MSIMNE_PROFILE", "MSIMNE_FINAL_GDAL_THREADS", "MSIMNE_TILE_GDAL_CACHE_MB", "MSIMNE_FINAL_GDAL_CACHE_MB", "MSIMNE_GDAL_WARP_MEMORY_MB"):
         monkeypatch.delenv(name, raising=False)
     args = build_parser().parse_args(argv)
     resolve_performance(args)
@@ -25,7 +25,7 @@ def test_profile_wsl_values(monkeypatch):
     args = _parse(["--profile", "wsl"], monkeypatch)
     assert args.workers == 3
     assert args.tile_parallelism == 3
-    assert args.final_gdal_threads == "6"
+    assert args.final_gdal_threads == "4"
 
 
 def test_explicit_argument_overrides_profile(monkeypatch):
@@ -117,3 +117,20 @@ def test_call_with_retries_succeeds_after_failure():
 
     assert call_with_retries(flaky, attempts=3, delay_seconds=0, label="test") == "ok"
     assert calls["n"] == 2
+
+
+def test_phase_specific_gdal_cache(monkeypatch):
+    args = _parse(["--profile", "wsl", "--final-gdal-cache-mb", "2048"], monkeypatch)
+    assert args.tile_gdal_cache_mb == 1024
+    assert args.final_gdal_cache_mb == 2048
+
+
+def test_gdal_caches_default_to_common_value(tmp_path: Path):
+    settings = Settings(project_root=tmp_path, gdal_cache_mb=3000)
+    assert settings.tile_gdal_cache_mb == 3000
+    assert settings.final_gdal_cache_mb == 3000
+
+
+def test_final_warp_memory_alias(monkeypatch):
+    args = _parse(["--final-warp-memory-mb", "1024"], monkeypatch)
+    assert args.gdal_warp_memory_mb == 1024

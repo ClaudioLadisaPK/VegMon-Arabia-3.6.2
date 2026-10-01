@@ -165,7 +165,7 @@ def run_gdal(command: list[str], settings: Settings) -> None:
 
 def gdal_subprocess_env(settings: Settings) -> dict[str, str]:
     env = os.environ.copy()
-    env["GDAL_CACHEMAX"] = str(settings.gdal_cache_mb)
+    env["GDAL_CACHEMAX"] = str(settings.final_gdal_cache_mb)
     prefix = Path(sys.prefix)
     candidates = {
         "GDAL_DATA": (prefix / "share" / "gdal", prefix / "Library" / "share" / "gdal"),

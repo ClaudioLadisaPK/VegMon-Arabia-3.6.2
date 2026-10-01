@@ -250,6 +250,7 @@ def ensure_dask_client(client: Client | None, settings: Settings) -> Client:
     # I worker Dask ereditano l'ambiente al momento dell'avvio: le opzioni HTTP di GDAL
     # (timeout/retry verso Planetary Computer) vanno impostate prima.
     os.environ.update(gdal_http_options(settings))
+    os.environ["GDAL_CACHEMAX"] = str(settings.tile_gdal_cache_mb)
     client = Client(
         processes=True,
         n_workers=settings.dask_workers,

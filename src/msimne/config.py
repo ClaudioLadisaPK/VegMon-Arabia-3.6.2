@@ -68,6 +68,8 @@ class Settings:
     gdal_warp_memory_mb: int = 16384
     gdal_cache_mb: int = 4096
     final_gdal_threads: str = ""
+    tile_gdal_cache_mb: int = 0
+    final_gdal_cache_mb: int = 0
     final_parallel_mosaics: int = 1
     use_scl: bool = True
     aoi_simplify_m: float = 0.0
@@ -86,6 +88,8 @@ class Settings:
             self.initial_max_items = self.max_items
         self.tile_parallelism = max(1, self.tile_parallelism)
         self.final_gdal_threads = str(self.final_gdal_threads or self.gdal_threads)
+        self.tile_gdal_cache_mb = self.tile_gdal_cache_mb or self.gdal_cache_mb
+        self.final_gdal_cache_mb = self.final_gdal_cache_mb or self.gdal_cache_mb
         self.final_parallel_mosaics = max(1, min(2, self.final_parallel_mosaics))
         self.tile_retries = max(1, self.tile_retries)
         self.aoi_simplify_m = max(0.0, self.aoi_simplify_m)

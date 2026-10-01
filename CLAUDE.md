@@ -20,7 +20,8 @@ python 3.6.2.py --month 2026-07 --region R05 --profile vm --aoi-simplify-m 5
 - La run è riprendibile: dopo Ctrl+C rilanciando lo stesso comando le tile complete vengono saltate (tile e COG sono scritti come `.partial` e rinominati a fine scrittura) e anche i mosaici finali gia completi.
 - Opzioni aggiunte: `--no-scl` (con `--max-items 6-8`), `--aoi-simplify-m` (0 = poligono originale, output identici), `--final-gdal-threads`, `--final-parallel-mosaics`, `--tile-retries`, `--network-wait-max-seconds`, `--http-timeout`, `--http-max-retry`, `--skip-disk-check`.
 - A fine run il log riporta `Tempi fasi <regione>: ...` (tile, copertura_tile, mosaico_stack, mosaico_ndvi, controllo_copertura, statistiche).
-- Riferimenti locali per confronti pixel per pixel: `outputs_riferimento_R04_baseline/` (R04 codice base) e worktree `/home/ladisa/vegmon_baseline` (R12 codice base); script `outputs_test/confronta.py <rif> <test> <suffisso>`.
+- Registro dei test (versione codice, regione, mese, parametri, tempi per fase, copertura, statistiche, pesi, RAM): `test_runs/registro_test.csv` (versionato, separatore `;`, decimali con virgola) + CSV statistiche in `test_runs/stats/`. Log completi archiviati in `outputs_test/archivio/` (non versionato: i log DEBUG possono contenere URL firmati). I raster dei test vengono cancellati dopo la registrazione per risparmiare spazio su C:.
+- Confronto pixel per pixel tra due output: `outputs_test/confronta.py <rif> <test> <suffisso>`; worktree con il codice base: `/home/ladisa/vegmon_baseline` (commit af5cec8).
 
 ## Benchmark: R04 Al Qaseem, 2026-07 (completata 2026-10-01)
 - AOI 87.800 km², 200 tile; mosaico finale 41066×46820 px, EPSG:3857, 10 m.
@@ -32,6 +33,11 @@ python 3.6.2.py --month 2026-07 --region R05 --profile vm --aoi-simplify-m 5
 - Risorse: RAM di picco ~5,5 GB su 15 (gdal_translate ~4,3 GB, worker Dask ~0,6 GB ciascuno), swap inutilizzato, ~10 GB scritti su disco. Il mosaico è sicuro lato memoria: Dask viene chiuso prima e GDAL lavora a blocchi.
 - Tentativi precedenti dello stesso giorno: le run del mattino (da PyCharm) morivano durante il mosaico GDAL senza traceback, probabilmente per OOM con i default tarati per la VM grande (`gdal-warp-memory-mb 16384`, `gdal-threads 16`, `workers 16`, `memory-limit 12GB`) su WSL da 15 GB. Con il profilo low-RAM sopra il mosaico regge. Alcune run sono fallite anche per errori DNS (`NameResolutionError`) verso il catalogo STAC.
 - Storico e parametri per la VM cliente: memorie Codex `~/.codex/memories/VEGMON.md` e `NCVC_VEG_MON.md`.
+
+## Benchmark: R06 Aseer, 2026-07 (2026-10-01, profilo wsl, test T06)
+- 206 tile, 71,3 min: tile 64,6 min (90%), mosaico STACK 4,9 (warp 1,5 + COG 3,4), NDVI 1,2, controllo copertura 6 s. Copertura 99,82%.
+- Mosaico con 6 thread GDAL: picco RAM GDAL 6,5 GB (sistema 8,5/15 GB) senza guadagno rispetto a 2 thread → profilo wsl a 4 thread. Il collo di bottiglia del mosaico e' la conversione COG (overview + statistiche raster calcolate due volte: `-stats` e `STATISTICS=YES`).
+- Fase tile: CPU ~25%, RAM ~3 GB, rete ~18 MB/s → margine per alzare workers/threads/tile-parallelism (da misurare su R10).
 
 ## Benchmark: R12 Al Bahah, 2026-07 (2026-10-01, profilo wsl)
 - Codice base 12 min 57 s; codice branch `ottimizzazione-aoi-grandi` 11 min 50 s con output identici pixel per pixel (tile 10:58, mosaici 45 s, nessun ricalcolo critico inutile).
