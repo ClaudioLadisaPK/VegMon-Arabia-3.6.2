@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "msimne"
-version = "0.1.0"
+version = "0.3.0"
 description = "Sentinel-2 processing pipeline for composites, NDVI, mosaics, and AOI statistics."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -21,12 +21,13 @@ dependencies = [
   "planetary-computer",
   "pyogrio",
   "pyproj",
-  "pystac-client",
+  "psutil",
+  "pystac-client>=0.7",
   "python-dateutil",
   "rasterio",
   "requests",
   "rioxarray",
-  "shapely",
+  "shapely>=2.0",
   "tqdm",
   "xarray",
 ]

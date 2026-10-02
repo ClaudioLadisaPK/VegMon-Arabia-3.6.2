@@ -1,0 +1,21 @@
+{
+  "_info": "Versione del codice delle run passate (chiave = nome del log). Le run nuove vengono registrate in automatico dal monitor in history/*.meta.json.",
+  "run_2026-07_R06_20261001_193339.log": {"label": "011fdd9", "commit": "011fdd9", "branch": "ottimizzazione-aoi-grandi", "note": "da registro test: commit delle 19:25, modifiche locali arrivate solo alle 20:06"},
+  "run_2026-07_R12_20261001_185256.log": {"label": "af5cec8 (baseline)", "commit": "af5cec8", "note": "worktree /home/ladisa/vegmon_baseline, confronto codice base"},
+  "run_2026-07_R04_20261001_173718.log": {"label": "af5cec8 (baseline low-RAM)", "commit": "af5cec8", "note": "codice poi committato come 'Baseline: low-RAM WSL run verified on R04'"},
+  "run_2026-07_R04_20261001_170032.log": {"label": "af5cec8 (baseline low-RAM)", "commit": "af5cec8", "note": "ripresa della stessa catena R04 conclusa alle 18:00"},
+  "run_2026-07_R04_20261001_163739.log": {"label": "af5cec8 (baseline low-RAM)", "commit": "af5cec8", "note": "avvio della catena R04 da zero conclusa alle 18:00"},
+  "run_2026-07_R04_20261001_160907.log": {"label": "pre-af5cec8 (debug Dask)", "note": "tentativi con pulizia Dask aggressiva (AllExit), poi corretta"},
+  "run_2026-07_R04_20261001_160708.log": {"label": "pre-af5cec8 (debug Dask)", "note": "errore Dask AllExit"},
+  "run_2026-07_R04_20261001_160330.log": {"label": "pre-af5cec8 (debug Dask)", "note": "errore Dask AllExit"},
+  "run_2026-07_R04_20261001_160222.log": {"label": "pre-af5cec8 (debug Dask)", "note": "errore Dask AllExit"},
+  "run_2026-07_R04_20261001_160042.log": {"label": "pre-af5cec8", "note": "errore DNS verso Planetary Computer"},
+  "run_2026-07_R04_20261001_144224.log": {"label": "2a70521 + modifiche", "note": "tentativo breve"},
+  "run_2026-07_R04_20261001_144134.log": {"label": "2a70521 + modifiche", "note": "tentativo breve"},
+  "run_2026-07_R04_20261001_144119.log": {"label": "2a70521 + modifiche", "note": "errore DNS verso Planetary Computer"},
+  "run_2026-07_R04_20261001_143546.log": {"label": "2a70521 + modifiche", "note": "tentativo breve"},
+  "run_2026-07_R04_20261001_142159.log": {"label": "2a70521 (default VM)", "commit": "2a70521", "note": "da PyCharm, morta nel mosaico GDAL (probabile OOM con default VM: warp 16 GB, 16 thread)"},
+  "run_2026-07_R04_20261001_135221.log": {"label": "2a70521 (default VM)", "commit": "2a70521", "note": "da PyCharm, morta nel mosaico GDAL (probabile OOM)"},
+  "run_2026-07_R04_20261001_133419.log": {"label": "2a70521 (default VM)", "commit": "2a70521", "note": "da PyCharm, morta nel mosaico GDAL (probabile OOM)"},
+  "run_2026-07_R04_20261001_124343.log": {"label": "2a70521 (default VM)", "commit": "2a70521", "note": "da PyCharm, morta nel mosaico GDAL senza traceback (probabile OOM)"}
+}

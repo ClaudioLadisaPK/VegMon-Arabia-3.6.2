@@ -10,12 +10,13 @@ dependencies:
   - xarray
   - numpy
   - pandas
-  - shapely
+  - shapely>=2.0
+  - psutil
   - pyproj
   - pyogrio
   - dask
   - distributed
-  - pystac-client
+  - pystac-client>=0.7
   - odc-stac
   - planetary-computer
   - python-dateutil

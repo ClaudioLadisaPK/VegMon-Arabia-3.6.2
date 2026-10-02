@@ -1,0 +1,583 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>VegMon Monitor</title>
+<style>
+:root {
+  --bg: #0f1216; --panel: #171b21; --panel2: #1d222a; --line: #2a313b;
+  --text: #e6e9ee; --muted: #8b95a3; --accent: #4cc38a; --blue: #5aa9f0;
+  --amber: #e8b04b; --red: #ef6461; --violet: #a68cf0; --grid: #232932;
+  --pending: #2c333d;
+}
+@media (prefers-color-scheme: light) {
+  :root { --bg: #f4f6f8; --panel: #ffffff; --panel2: #f0f2f5; --line: #dfe3e8;
+    --text: #1b2028; --muted: #5f6b7a; --accent: #1f9d63; --blue: #2f7fd1;
+    --amber: #c58a12; --red: #d64541; --violet: #7a5bd6; --grid: #eceff3; --pending: #e3e7ec; }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text);
+  font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+.wrap { max-width: 1500px; margin: 0 auto; padding: 16px; }
+header { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 20px; margin-bottom: 14px; }
+h1 { font-size: 20px; margin: 0; font-weight: 650; }
+h1 small { color: var(--muted); font-weight: 400; margin-left: 6px; }
+.pill { padding: 3px 10px; border-radius: 99px; font-size: 12px; font-weight: 600; letter-spacing: .02em; }
+.pill.running { background: color-mix(in srgb, var(--blue) 20%, transparent); color: var(--blue); }
+.pill.done { background: color-mix(in srgb, var(--accent) 20%, transparent); color: var(--accent); }
+.pill.failed, .pill.stopped { background: color-mix(in srgb, var(--red) 20%, transparent); color: var(--red); }
+.pill.idle { background: var(--panel2); color: var(--muted); }
+.meta { color: var(--muted); font-size: 12.5px; display: flex; gap: 16px; flex-wrap: wrap; }
+.meta b { color: var(--text); font-weight: 600; }
+.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px; min-width: 0; }
+.panel h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .07em; color: var(--muted); margin: 0 0 10px; font-weight: 600;
+  display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.grid { display: grid; gap: 12px; }
+.kpis { grid-template-columns: repeat(7, minmax(0, 1fr)); margin-bottom: 12px; }
+.kpi .v { font-size: 26px; font-weight: 650; font-variant-numeric: tabular-nums; line-height: 1.15; }
+.kpi .v small { font-size: 14px; color: var(--muted); font-weight: 500; }
+.kpi .s { color: var(--muted); font-size: 12px; margin-top: 2px; }
+.bar { height: 6px; background: var(--pending); border-radius: 4px; overflow: hidden; margin-top: 8px; display: flex; }
+.bar > i { display: block; height: 100%; }
+.stepper { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 6px; margin-bottom: 12px; }
+.step { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; position: relative; overflow: hidden; }
+.step .n { font-size: 12.5px; font-weight: 600; }
+.step .t { font-size: 11.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.step.done { border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); }
+.step.done .n::before { content: "✓ "; color: var(--accent); }
+.step.active { border-color: var(--blue); box-shadow: 0 0 0 1px var(--blue) inset; }
+.step.active .n::before { content: "● "; color: var(--blue); animation: blink 1.2s infinite; }
+.step.fail { border-color: var(--red); }
+@keyframes blink { 50% { opacity: .25; } }
+.charts { grid-template-columns: repeat(2, minmax(0, 1fr)); margin-bottom: 12px; }
+canvas { width: 100%; height: 170px; display: block; }
+.legend { display: flex; gap: 12px; font-size: 11.5px; color: var(--muted); font-weight: 500; text-transform: none; letter-spacing: 0; }
+.legend i { display: inline-block; width: 10px; height: 3px; border-radius: 2px; margin-right: 5px; vertical-align: middle; }
+.two { grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); margin-bottom: 12px; }
+#map { width: 100%; height: 420px; display: block; }
+#map rect { stroke: var(--panel); stroke-width: .6; }
+.tip { position: fixed; pointer-events: none; background: var(--panel2); border: 1px solid var(--line); border-radius: 6px;
+  padding: 6px 8px; font-size: 12px; display: none; z-index: 10; max-width: 320px; }
+table { width: 100%; border-collapse: collapse; font-size: 12.5px; font-variant-numeric: tabular-nums; }
+th, td { text-align: left; padding: 5px 6px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+th { color: var(--muted); font-weight: 600; font-size: 11.5px; }
+td.num, th.num { text-align: right; }
+.cores { display: grid; grid-template-columns: repeat(auto-fill, minmax(42px, 1fr)); gap: 6px; }
+.core { background: var(--pending); border-radius: 5px; height: 48px; position: relative; overflow: hidden; }
+.core i { position: absolute; left: 0; right: 0; bottom: 0; background: var(--blue); }
+.core span { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 600; }
+.mos { display: grid; gap: 10px; }
+.mos .row { background: var(--panel2); border-radius: 8px; padding: 10px; }
+.mos .row .h { display: flex; justify-content: space-between; font-weight: 600; font-size: 13px; }
+.mos .row .d { color: var(--muted); font-size: 12px; margin-top: 3px; }
+.log { font: 11.5px/1.5 ui-monospace, SFMono-Regular, Consolas, monospace; max-height: 360px; overflow: auto; white-space: pre-wrap;
+  word-break: break-all; background: var(--panel2); border-radius: 8px; padding: 8px 10px; }
+.log .w { color: var(--amber); } .log .e { color: var(--red); } .log .k { color: var(--accent); }
+.muted { color: var(--muted); }
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+.seg button { background: transparent; color: var(--muted); border: 0; padding: 2px 8px; font-size: 11.5px; cursor: pointer; }
+.seg button.on { background: var(--panel2); color: var(--text); }
+.disk { margin-bottom: 10px; font-size: 12.5px; }
+.disk .bar { height: 8px; margin-top: 4px; }
+.net .t { background: var(--panel2); border-radius: 8px; padding: 10px; margin-bottom: 8px; }
+.net .h { display: flex; justify-content: space-between; font-weight: 600; font-size: 13px; gap: 8px; }
+.net .d { color: var(--muted); font-size: 12px; margin-top: 3px; font-variant-numeric: tabular-nums; }
+.dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; vertical-align: middle; }
+.tabs { margin-left: auto; }
+.tabs button { padding: 5px 12px; font-size: 12.5px; font-weight: 600; }
+.hidden { display: none !important; }
+tr.click { cursor: pointer; }
+tr.click:hover td { background: var(--panel2); }
+tr.sel td { background: color-mix(in srgb, var(--blue) 14%, transparent); }
+td.wrap { white-space: normal; min-width: 260px; max-width: 520px; color: var(--muted); font-size: 12px; }
+.badge { padding: 1px 7px; border-radius: 99px; font-size: 11.5px; font-weight: 600; white-space: nowrap; }
+.b-ok { background: color-mix(in srgb, var(--accent) 18%, transparent); color: var(--accent); }
+.b-ko { background: color-mix(in srgb, var(--red) 18%, transparent); color: var(--red); }
+.b-run { background: color-mix(in srgb, var(--blue) 18%, transparent); color: var(--blue); }
+.b-mid { background: color-mix(in srgb, var(--amber) 18%, transparent); color: var(--amber); }
+.kv { display: grid; grid-template-columns: max-content 1fr; gap: 4px 14px; font-size: 12.5px; }
+.kv dt { color: var(--muted); } .kv dd { margin: 0; overflow-wrap: anywhere; }
+.pbar { display: flex; height: 22px; border-radius: 6px; overflow: hidden; background: var(--pending); margin: 6px 0 4px; }
+.pbar i { display: flex; align-items: center; justify-content: center; font-size: 10.5px; font-style: normal; color: #fff; overflow: hidden; white-space: nowrap; min-width: 2px; }
+.plegend { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 11.5px; color: var(--muted); }
+.plegend i { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 4px; vertical-align: -1px; }
+.cmp { display: grid; grid-template-columns: max-content 1fr max-content; gap: 6px 10px; align-items: center; font-size: 12.5px; }
+.cmp .track { height: 12px; background: var(--pending); border-radius: 4px; overflow: hidden; }
+.cmp .track i { display: block; height: 100%; border-radius: 4px; }
+.err { background: color-mix(in srgb, var(--red) 15%, transparent); color: var(--red); padding: 8px 12px; border-radius: 8px; margin-bottom: 12px; display: none; }
+@media (max-width: 1100px) { .kpis { grid-template-columns: repeat(4, minmax(0, 1fr)); } .stepper { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+@media (max-width: 800px) { .charts, .two { grid-template-columns: minmax(0, 1fr); } .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .stepper { grid-template-columns: repeat(2, minmax(0, 1fr)); } #map { height: 320px; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="err" id="err"></div>
+  <header>
+    <h1 id="title">VegMon Monitor<small></small></h1>
+    <span class="pill idle" id="state">—</span>
+    <div class="meta" id="meta"></div>
+    <span class="seg tabs" id="tabs"><button data-v="live" class="on">Run attuale</button><button data-v="hist">Storico test</button></span>
+  </header>
+  <div id="view-live">
+
+  <div class="stepper" id="stepper"></div>
+
+  <div class="grid kpis">
+    <div class="panel kpi"><h2>Tile completate</h2><div class="v" id="k-tiles">—</div><div class="bar" id="k-tiles-bar"></div><div class="s" id="k-tiles-s"></div></div>
+    <div class="panel kpi"><h2>Velocità</h2><div class="v" id="k-rate">—</div><div class="s" id="k-rate-s"></div></div>
+    <div class="panel kpi"><h2>Fine stimata</h2><div class="v" id="k-eta">—</div><div class="s" id="k-eta-s"></div></div>
+    <div class="panel kpi"><h2>CPU</h2><div class="v" id="k-cpu">—</div><div class="s" id="k-cpu-s"></div></div>
+    <div class="panel kpi"><h2>RAM</h2><div class="v" id="k-mem">—</div><div class="bar" id="k-mem-bar"></div><div class="s" id="k-mem-s"></div></div>
+    <div class="panel kpi"><h2>Disco I/O</h2><div class="v" id="k-io">—</div><div class="s" id="k-io-s"></div></div>
+    <div class="panel kpi"><h2>Rete</h2><div class="v" id="k-net">—</div><div class="s" id="k-net-s"></div></div>
+  </div>
+
+  <div class="grid charts">
+    <div class="panel"><h2>CPU %
+      <span class="legend"><span><i style="background:var(--blue)"></i>host</span><span><i style="background:var(--violet)"></i>processi run</span></span>
+      <span class="seg" id="win"><button data-m="10">10m</button><button data-m="30" class="on">30m</button><button data-m="60">1h</button><button data-m="180">3h</button></span></h2>
+      <canvas id="c-cpu"></canvas></div>
+    <div class="panel"><h2>Memoria GB <span class="legend"><span><i style="background:var(--accent)"></i>usata</span><span><i style="background:var(--muted)"></i>totale</span></span></h2><canvas id="c-mem"></canvas></div>
+    <div class="panel"><h2>Disco MB/s <span class="legend"><span><i style="background:var(--amber)"></i>scrittura</span><span><i style="background:var(--blue)"></i>lettura</span></span></h2><canvas id="c-io"></canvas></div>
+    <div class="panel"><h2>Tile completate nel tempo <span class="legend" id="tl-legend"></span></h2><canvas id="c-tiles"></canvas></div>
+    <div class="panel"><h2>Rete MB/s <span class="legend"><span><i style="background:var(--accent)"></i>download</span><span><i style="background:var(--violet)"></i>upload</span></span></h2><canvas id="c-net"></canvas></div>
+    <div class="panel"><h2>Connessione Planetary Computer <span class="legend">controllo ogni 15 s · latenza ms</span></h2>
+      <div class="net" id="net"></div><canvas id="c-lat" style="height:90px"></canvas></div>
+  </div>
+
+  <div class="grid two">
+    <div class="panel"><h2>Griglia tile <span class="legend">
+      <span><i style="background:var(--accent)"></i>completate</span><span><i style="background:var(--blue)"></i>in corso</span>
+      <span><i style="background:var(--pending)"></i>in attesa</span><span><i style="background:var(--red)"></i>fallite / critiche</span></span></h2>
+      <svg id="map"></svg></div>
+    <div class="grid" style="align-content:start">
+      <div class="panel"><h2>Mosaico finale</h2><div class="mos" id="mosaic"></div></div>
+      <div class="panel"><h2>Core CPU</h2><div class="cores" id="cores"></div></div>
+      <div class="panel"><h2>Disco</h2><div id="disks"></div></div>
+    </div>
+  </div>
+
+  <div class="grid two">
+    <div class="panel"><h2>Processi della run</h2><div style="overflow-x:auto"><table id="procs"></table></div></div>
+    <div class="panel"><h2>Warning / errori <span class="legend" id="ev-count"></span></h2><div class="log" id="events" style="max-height:240px"></div></div>
+  </div>
+
+  <div class="panel"><h2>Log <span class="legend" id="logpath"></span></h2><div class="log" id="tail"></div></div>
+  </div>
+
+  <div id="view-hist" class="hidden">
+    <div class="grid" style="margin-bottom:12px">
+      <div class="panel"><h2>Registro test <span class="legend" id="reg-path"></span></h2><div style="overflow-x:auto"><table id="reg"></table></div></div>
+      <div class="panel" style="max-width:760px"><h2>Confronto: secondi per tile (durata totale / tile)</h2><div class="cmp" id="cmp"></div>
+        <div class="muted" style="font-size:11.5px;margin-top:10px">Più corto = più veloce. Include mosaici e riprese; le regioni piccole pesano di più il tempo fisso.</div></div>
+    </div>
+    <div class="panel hidden" id="detail" style="margin-bottom:12px"></div>
+    <div class="panel"><h2>Altre run dai log (non nel registro)
+      <label class="legend" style="cursor:pointer"><input type="checkbox" id="show-short"> mostra prove brevi</label></h2>
+      <div style="overflow-x:auto"><table id="others"></table></div></div>
+  </div>
+</div>
+<div class="tip" id="tip"></div>
+
+<script>
+const $ = id => document.getElementById(id);
+const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const fmt = (v, d = 1) => (v == null || isNaN(v)) ? "—" : v.toFixed(d);
+const esc = s => String(s).replace(/[&<>]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
+function fmtMin(m) {
+  if (m == null || isNaN(m)) return "—";
+  if (m < 1) return Math.round(m * 60) + " s";
+  const h = Math.floor(m / 60), mm = Math.round(m % 60);
+  return h ? `${h} h ${String(mm).padStart(2, "0")} min` : `${mm} min`;
+}
+const clock = t => new Date(t * 1000).toLocaleTimeString("it-IT", {hour: "2-digit", minute: "2-digit"});
+const parseTs = s => s ? new Date(s.replace(" ", "T")).getTime() / 1000 : null;
+
+let history = [], lastT = 0, windowMin = 30, status = null, logKey = null;
+
+document.querySelectorAll("#win button").forEach(b => b.onclick = () => {
+  document.querySelectorAll("#win button").forEach(x => x.classList.remove("on"));
+  b.classList.add("on"); windowMin = +b.dataset.m; drawCharts();
+});
+
+function lineChart(canvas, series, opt = {}) {
+  const dpr = window.devicePixelRatio || 1, W = canvas.clientWidth, H = canvas.clientHeight;
+  canvas.width = W * dpr; canvas.height = H * dpr;
+  const g = canvas.getContext("2d"); g.scale(dpr, dpr); g.clearRect(0, 0, W, H);
+  const L = 40, R = 8, T = 8, B = 20, pw = W - L - R, ph = H - T - B;
+  const now = Date.now() / 1000, t0 = opt.t0 ?? now - windowMin * 60, t1 = opt.t1 ?? now;
+  let ymax = opt.ymax ?? 0;
+  if (opt.ymax == null) for (const s of series) for (const [t, v] of s.data) if (t >= t0 && v > ymax) ymax = v;
+  if (opt.ymax == null) { const step = niceStep(ymax / 4 || 1); ymax = Math.max(step * 4, opt.ymin || 0); }
+  const x = t => L + (t - t0) / (t1 - t0) * pw, y = v => T + ph - (v / ymax) * ph;
+  g.font = "11px system-ui, sans-serif"; g.fillStyle = css("--muted"); g.strokeStyle = css("--grid"); g.lineWidth = 1;
+  for (let i = 0; i <= 4; i++) {
+    const v = ymax * i / 4, yy = Math.round(y(v)) + .5;
+    g.beginPath(); g.moveTo(L, yy); g.lineTo(W - R, yy); g.stroke();
+    g.textAlign = "right"; g.textBaseline = "middle"; g.fillText(v >= 100 ? v.toFixed(0) : +v.toFixed(1), L - 6, yy);
+  }
+  g.textAlign = "center"; g.textBaseline = "top";
+  for (let i = 0; i <= 4; i++) { const t = t0 + (t1 - t0) * i / 4; g.fillText(clock(t), Math.min(Math.max(x(t), L + 16), W - R - 16), H - B + 5); }
+  for (const s of series) {
+    const pts = s.data.filter(([t]) => t >= t0 - 5);
+    if (!pts.length) continue;
+    g.strokeStyle = css(s.color); g.lineWidth = s.width || 1.6; g.setLineDash(s.dash || []);
+    g.beginPath();
+    pts.forEach(([t, v], i) => {
+      const px = x(Math.max(t, t0)), py = y(Math.min(v, ymax));
+      if (i && s.step) g.lineTo(px, y(Math.min(pts[i - 1][1], ymax)));
+      i ? g.lineTo(px, py) : g.moveTo(px, py);
+    });
+    if (s.step && pts.length) g.lineTo(x(t1), y(Math.min(pts[pts.length - 1][1], ymax)));
+    g.stroke(); g.setLineDash([]);
+    if (s.fill) {
+      g.lineTo(x(s.step ? t1 : pts[pts.length - 1][0]), y(0)); g.lineTo(x(Math.max(pts[0][0], t0)), y(0)); g.closePath();
+      g.globalAlpha = .12; g.fillStyle = css(s.color); g.fill(); g.globalAlpha = 1;
+    }
+  }
+}
+function niceStep(v) { const p = Math.pow(10, Math.floor(Math.log10(v))); const n = v / p; return (n <= 1 ? 1 : n <= 2 ? 2 : n <= 2.5 ? 2.5 : n <= 5 ? 5 : 10) * p; }
+
+function drawCharts() {
+  if (!status || view !== "live") return;
+  const ncores = (status.host.cores || []).length || 1;
+  const h = history;
+  lineChart($("c-cpu"), [
+    {data: h.map(p => [p.t, p.cpu]), color: "--blue", fill: true},
+    {data: h.map(p => [p.t, p.proc_cpu / ncores]), color: "--violet"},
+  ], {ymax: 100});
+  const memTot = status.host.mem.total;
+  lineChart($("c-mem"), [
+    {data: h.map(p => [p.t, p.mem]), color: "--accent", fill: true},
+    {data: h.length ? [[h[0].t, memTot], [Date.now() / 1000, memTot]] : [], color: "--muted", dash: [4, 4], width: 1},
+  ], {ymax: Math.ceil(memTot)});
+  lineChart($("c-io"), [
+    {data: h.map(p => [p.t, p.wr]), color: "--amber", fill: true},
+    {data: h.map(p => [p.t, p.rd]), color: "--blue"},
+  ], {ymin: 5});
+  lineChart($("c-net"), [
+    {data: h.map(p => [p.t, p.rx || 0]), color: "--accent", fill: true},
+    {data: h.map(p => [p.t, p.tx || 0]), color: "--violet"},
+  ], {ymin: 5});
+  const nt = status.net?.targets || [];
+  lineChart($("c-lat"), nt.map((t, i) => ({data: t.series.filter(p => p[1] != null), color: i ? "--amber" : "--blue", width: 1.4})), {ymin: 500});
+  // tile: dall'inizio run, con riferimento benchmark ~3 tile/min
+  const tl = status.tiles, start = parseTs(status.run.start);
+  const t0 = start ? Math.min(start, Date.now() / 1000 - 60) : Date.now() / 1000 - windowMin * 60;
+  const already = tl.counts.done - tl.done_this_run;
+  const series = [{data: [[t0, already], ...tl.timeline.filter(t => t >= t0).map((t, i) => [t, already + i + 1])], color: "--accent", step: true, fill: true, width: 2}];
+  if (tl.total) series.push({data: [[t0, tl.total], [Date.now() / 1000 + 1, tl.total]], color: "--muted", dash: [4, 4], width: 1});
+  const tilesEnd = parseTs(status.run.phase_times?.tile?.end);
+  lineChart($("c-tiles"), series, {t0, t1: tilesEnd && status.progress.state !== "running" ? Math.max(tilesEnd, Date.now()/1000) : Date.now() / 1000, ymax: Math.max(tl.total, 1)});
+  $("tl-legend").textContent = start ? `dall'avvio (${status.run.start.slice(11, 16)})` : "";
+}
+
+function renderStepper(s) {
+  const pt = s.run.phase_times || {}, pr = s.progress, now = s.now;
+  let html = "";
+  for (const [key, label] of pr.phases) {
+    const p = pt[key] || {}, st = parseTs(p.start), en = parseTs(p.end);
+    let cls = "", t = "in attesa";
+    if (key === "fine") {
+      if (pr.state === "done") { cls = "done"; t = s.run.status; }
+      else if (pr.state === "failed") { cls = "fail"; t = s.run.status; }
+    } else if (en) { cls = "done"; t = fmtMin((en - st) / 60); }
+    else if (st && pr.phase === key && pr.state === "running") { cls = "active"; t = "da " + fmtMin((now - st) / 60); }
+    else if (st && pr.state !== "running") { cls = "fail"; t = "interrotto"; }
+    else if (st) { cls = "done"; t = "—"; }
+    if (key === "tile" && cls === "active") t += ` · ${s.tiles.counts.done}/${s.tiles.total}`;
+    if (key === "controllo_copertura" && s.run.coverage) t = s.run.coverage;
+    html += `<div class="step ${cls}"><div class="n">${label}</div><div class="t">${esc(t)}</div></div>`;
+  }
+  $("stepper").innerHTML = html;
+}
+
+function renderMap(items) {
+  const svg = $("map");
+  if (!items.length) { svg.innerHTML = `<text x="50%" y="50%" text-anchor="middle" fill="${css("--muted")}">nessuna tile in working_s2</text>`; return; }
+  const xs = [...new Set(items.map(i => i.x))].sort((a, b) => a - b), ys = [...new Set(items.map(i => i.y))].sort((a, b) => a - b);
+  const dx = xs.length > 1 ? Math.min(...xs.slice(1).map((v, i) => v - xs[i])) : 1;
+  const dy = ys.length > 1 ? Math.min(...ys.slice(1).map((v, i) => v - ys[i])) : 1;
+  const minx = xs[0], maxx = xs[xs.length - 1] + dx, miny = ys[0], maxy = ys[ys.length - 1] + dy;
+  svg.setAttribute("viewBox", `0 0 ${maxx - minx} ${maxy - miny}`);
+  svg.setAttribute("preserveAspectRatio", "xMidYMid meet");
+  const col = {done: "--accent", running: "--blue", pending: "--pending", failed: "--red"};
+  svg.innerHTML = items.map(i => {
+    const c = i.crit ? "--red" : col[i.s];
+    const op = i.crit && i.s === "done" ? .55 : 1;
+    return `<rect x="${i.x - minx}" y="${maxy - i.y - dy}" width="${dx}" height="${dy}" fill="${css(c)}" opacity="${op}" data-id="${i.id}" data-s="${i.s}" data-c="${i.crit || ""}" data-st="${i.started || ""}" vector-effect="non-scaling-stroke">${i.s === "running" ? `<animate attributeName="opacity" values="1;.45;1" dur="1.6s" repeatCount="indefinite"/>` : ""}</rect>`;
+  }).join("");
+}
+$("map").addEventListener("mousemove", e => {
+  const r = e.target.closest("rect"), tip = $("tip");
+  if (!r) { tip.style.display = "none"; return; }
+  const lab = {done: "completata", running: "in corso", pending: "in attesa", failed: "fallita"}[r.dataset.s];
+  tip.innerHTML = `<b>${r.dataset.id}</b><br>${lab}${r.dataset.st ? "<br>avviata " + r.dataset.st.slice(11) : ""}${r.dataset.c ? `<br><span style="color:var(--red)">copertura critica: ${r.dataset.c}</span>` : ""}`;
+  tip.style.display = "block"; tip.style.left = Math.min(e.clientX + 14, innerWidth - 330) + "px"; tip.style.top = (e.clientY + 14) + "px";
+});
+$("map").addEventListener("mouseleave", () => $("tip").style.display = "none");
+
+function renderMosaic(s) {
+  const pt = s.run.phase_times || {}, rows = [];
+  for (const st of s.mosaic.steps) {
+    const key = "mosaico_" + st.kind, p = pt[key] || {};
+    let state = "in attesa", detail = "", pct = 0, color = "--pending";
+    if (st.final && (p.end || !p.start)) { state = "completato"; detail = `${st.final.name} · ${fmt(st.final.gb, 2)} GB`; pct = 100; color = "--accent";
+      if (p.start && p.end) detail += ` · ${fmtMin((parseTs(p.end) - parseTs(p.start)) / 60)}`; }
+    else if (p.start) {
+      const el = (s.now - parseTs(p.start)) / 60; color = "--blue";
+      if (st.cog_gb != null) { state = "gdal_translate → COG"; pct = 75; detail = `COG parziale ${fmt(st.cog_gb, 2)} GB`; }
+      else if (st.warp_gb != null) {
+        state = "gdalwarp"; pct = st.expected_warp_gb ? Math.min(70 * st.warp_gb / st.expected_warp_gb, 70) : 30;
+        detail = `warp ${fmt(st.warp_gb, 2)}${st.expected_warp_gb ? " / ~" + fmt(st.expected_warp_gb, 1) : ""} GB`;
+        if (st.dims) detail += ` · ${st.dims[0]}×${st.dims[1]} px, ${st.dims[2]} bande`;
+      } else { state = "preparazione VRT"; pct = 3; }
+      detail += ` · da ${fmtMin(el)}`;
+    }
+    rows.push(`<div class="row"><div class="h"><span>${st.kind.toUpperCase()}</span><span style="color:var(${color === "--pending" ? "--muted" : color})">${state}</span></div>
+      <div class="bar"><i style="width:${pct}%;background:var(${color})"></i></div><div class="d">${esc(detail || "parte a fine fase tile")}</div></div>`);
+  }
+  const extra = [];
+  if ((s.mosaic.gdal || []).length) extra.push("GDAL attivo: " + s.mosaic.gdal.join(", "));
+  if (s.run.coverage) extra.push("Copertura NDVI: " + s.run.coverage);
+  if (s.run.timings) extra.push("Tempi fasi: " + s.run.timings);
+  $("mosaic").innerHTML = rows.join("") + (extra.length ? `<div class="muted" style="font-size:12px">${extra.map(esc).join("<br>")}</div>` : "");
+}
+
+function renderNet(s) {
+  const n = s.net || {targets: [], log: {}}, lg = n.log || {};
+  const down = n.targets.filter(t => t.last && !t.last.ok);
+  $("k-net").innerHTML = `${fmt(n.rx_mbs, 1)}<small> MB/s ↓</small>`;
+  $("k-net-s").innerHTML = down.length || lg.waiting_since
+    ? `<span style="color:var(--red)">${lg.waiting_since ? "VegMon in attesa rete" : "host non raggiungibile"}</span>`
+    : `↑ ${fmt(n.tx_mbs, 2)} MB/s · ${n.targets.length ? "PC ok" : ""}${lg.errors_1h ? ` · <span style="color:var(--amber)">${lg.errors_1h} err/h</span>` : ""}`;
+  const cols = ["--blue", "--amber"];
+  let html = n.targets.map((t, i) => {
+    const l = t.last; let state = "in verifica…", c = "--muted", d = "";
+    if (l) {
+      if (l.ok) { state = `${fmt(l.total_ms, 0)} ms`; c = l.total_ms > 2000 ? "--amber" : "--accent";
+        d = `DNS ${fmt(l.dns_ms, 0)} · TCP ${fmt(l.tcp_ms, 0)} · HTTPS ${fmt(l.http_ms, 0)} ms`; }
+      else { state = "NON RAGGIUNGIBILE"; c = "--red"; d = esc(l.error || ""); }
+    }
+    const up = t.uptime_pct != null ? `ultima ora: ${fmt(t.uptime_pct, 1)}% ok · mediana ${fmt(t.median_ms, 0)} ms` + (t.fails_1h ? ` · <span style="color:var(--red)">${t.fails_1h} falliti (ultimo ${clock(t.last_fail.t)})</span>` : "") : "";
+    return `<div class="t"><div class="h"><span><i class="dot" style="background:var(${cols[i]})"></i>${esc(t.name)}</span><span style="color:var(${c})">${state}</span></div>
+      <div class="d">${esc(t.host)}${d ? " · " + d : ""}</div><div class="d">${up}</div></div>`;
+  }).join("");
+  const lastMsg = lg.last ? `<br>ultimo: ${lg.last.ts.slice(11)} ${esc(lg.last.msg)}` : "";
+  html += `<div class="d muted" style="font-size:12px;margin-bottom:6px">Errori di rete nel log: <b style="color:var(${lg.errors_total ? "--amber" : "--text"})">${lg.errors_total ?? 0}</b> (ultima ora ${lg.errors_1h ?? 0})` +
+    (lg.waiting_since ? ` · <b style="color:var(--red)">VegMon in attesa della rete dalle ${lg.waiting_since.slice(11)}</b>` : "") + lastMsg +
+    `<br>scaricati da avvio WSL: ${fmt(n.rx_total_gb, 1)} GB</div>`;
+  $("net").innerHTML = html;
+}
+
+let firstRender = true;
+function render(s) {
+  status = s;
+  if (firstRender) { firstRender = false; if (s.progress?.state === "idle" && !location.hash) setTimeout(() => setView("hist"), 0); }
+  $("err").style.display = s.monitor_error ? "block" : "none"; $("err").textContent = s.monitor_error || "";
+  const run = s.run, pr = s.progress, tl = s.tiles, host = s.host;
+  const region = run.region || run.region_arg || "—";
+  $("title").innerHTML = `VegMon · ${esc(region)}<small>${esc(run.month || "")}</small>`;
+  document.title = `${tl.counts.done}/${tl.total} · ${region} · VegMon`;
+  const stateLab = {running: "IN CORSO", done: "COMPLETATA", failed: "FALLITA", stopped: "PROCESSO FERMO", idle: "NESSUNA RUN"}[pr.state];
+  $("state").className = "pill " + pr.state; $("state").textContent = stateLab;
+  const lastAge = run.last_ts ? (s.now - parseTs(run.last_ts)) : null;
+  $("meta").innerHTML = [
+    run.start ? `avvio <b>${run.start.slice(11, 16)}</b>` : "",
+    `trascorso <b>${fmtMin(pr.elapsed_min)}</b>`,
+    run.area ? `AOI <b>${esc(run.area)}</b>` : "",
+    run.pid ? `PID <b>${run.pid}</b>` : "",
+    lastAge != null ? `ultima riga log <b>${fmtMin(lastAge / 60)}</b> fa` : "",
+  ].filter(Boolean).join("");
+  $("meta").title = run.params || "";
+
+  renderStepper(s);
+  const pctDone = tl.total ? tl.counts.done / tl.total * 100 : 0;
+  $("k-tiles").innerHTML = `${tl.counts.done}<small> / ${tl.total}</small>`;
+  $("k-tiles-bar").innerHTML = `<i style="width:${pctDone}%;background:var(--accent)"></i><i style="width:${tl.total ? tl.counts.running / tl.total * 100 : 0}%;background:var(--blue)"></i>`;
+  $("k-tiles-s").textContent = `${fmt(pctDone, 0)}% · ${tl.counts.running} in corso` + (tl.counts.failed ? ` · ${tl.counts.failed} fallite` : "") + (tl.counts.critical ? ` · ${tl.counts.critical} critiche` : "");
+  $("k-rate").innerHTML = `${fmt(pr.rate, 1)}<small> tile/min</small>`;
+  $("k-rate-s").textContent = `ultimi 10 min · media run ${fmt(tl.rate_run, 1)} · bench R04 2,7–3,5`;
+  if (pr.state === "running") {
+    $("k-eta").innerHTML = pr.eta_min != null ? new Date((s.now + pr.eta_min * 60) * 1000).toLocaleTimeString("it-IT", {hour: "2-digit", minute: "2-digit"}) : "—";
+    $("k-eta-s").textContent = pr.eta_min != null ? `tra ~${fmtMin(pr.eta_min)} (mosaici stimati da bench)` : "in attesa di dati sulla velocità";
+  } else { $("k-eta").textContent = pr.state === "done" ? "finita" : "—"; $("k-eta-s").textContent = run.timings ? "durata " + fmtMin(pr.elapsed_min) : ""; }
+  const ncores = host.cores.length || 1, procCpu = s.procs.reduce((a, p) => a + p.cpu, 0);
+  $("k-cpu").innerHTML = `${fmt(host.cpu, 0)}<small> %</small>`;
+  $("k-cpu-s").textContent = `${ncores} core · run ${fmt(procCpu / ncores, 0)}% (${fmt(procCpu / 100, 1)} core)`;
+  const m = host.mem;
+  $("k-mem").innerHTML = `${fmt(m.used, 1)}<small> / ${fmt(m.total, 0)} GB</small>`;
+  $("k-mem-bar").innerHTML = `<i style="width:${m.used / m.total * 100}%;background:${m.used / m.total > .85 ? "var(--red)" : "var(--accent)"}"></i>`;
+  const procRss = s.procs.reduce((a, p) => a + p.rss_gb, 0);
+  $("k-mem-s").textContent = `run ${fmt(procRss, 1)} GB · swap ${fmt(m.swap_used, 1)} GB`;
+  $("k-io").innerHTML = `${fmt(host.write_mbs, 0)}<small> MB/s W</small>`;
+  $("k-io-s").textContent = `lettura ${fmt(host.read_mbs, 0)} MB/s · ${host.disk_dev || "?"}`;
+
+  renderNet(s);
+  renderMap(tl.items);
+  renderMosaic(s);
+  $("cores").innerHTML = host.cores.map((c, i) => `<div class="core" title="core ${i}"><i style="height:${c}%;background:${c > 90 ? "var(--amber)" : "var(--blue)"}"></i><span>${fmt(c, 0)}</span></div>`).join("");
+  const gb = b => b != null ? fmt(b / 1024 ** 3, 1) + " GB" : "—";
+  $("disks").innerHTML = host.disks.map(d => `<div class="disk"><div style="display:flex;justify-content:space-between"><span>${d.path === "/" ? "WSL /" : "Windows C:"}</span><span class="muted">${fmt(d.free, 0)} GB liberi su ${fmt(d.total, 0)}</span></div>
+    <div class="bar"><i style="width:${d.used_pct}%;background:${d.used_pct > 90 ? "var(--red)" : d.used_pct > 80 ? "var(--amber)" : "var(--accent)"}"></i></div></div>`).join("")
+    + `<div class="muted" style="font-size:12px">working_s2 <b style="color:var(--text)">${gb(host.work_bytes)}</b> · mosaici S2 <b style="color:var(--text)">${gb(host.outputs_bytes)}</b><br><span title="${esc(run.outputs_dir || "")}">${esc(run.outputs_dir || "")}</span></div>`;
+
+  const procs = [...s.procs].sort((a, b) => b.cpu - a.cpu);
+  $("procs").innerHTML = `<tr><th>PID</th><th>Ruolo</th><th class="num">CPU %</th><th class="num">RAM GB</th><th class="num">R MB/s</th><th class="num">W MB/s</th></tr>` +
+    (procs.length ? procs.map(p => `<tr title="${esc(p.cmd)}"><td>${p.pid}</td><td>${esc(p.role)}</td><td class="num">${fmt(p.cpu, 0)}</td><td class="num">${fmt(p.rss_gb, 2)}</td><td class="num">${fmt(p.io_r, 1)}</td><td class="num">${fmt(p.io_w, 1)}</td></tr>`).join("")
+      : `<tr><td colspan="6" class="muted">nessun processo 3.6.2.py attivo</td></tr>`);
+
+  const ev = run.events || [];
+  $("ev-count").textContent = ev.length ? `${ev.length}` : "";
+  $("events").innerHTML = ev.length ? ev.slice().reverse().map(e => `<div class="${e.level === "WARNING" ? "w" : "e"}">${e.ts.slice(11)} ${esc(e.msg)}</div>`).join("") : `<span class="muted">nessuno</span>`;
+  $("logpath").textContent = run.log || "";
+  const tail = $("tail"), atBottom = tail.scrollTop + tail.clientHeight >= tail.scrollHeight - 20;
+  tail.innerHTML = (run.tail || []).map(l => {
+    const c = l.includes("| ERROR |") || l.includes("Traceback") ? "e" : l.includes("| WARNING |") ? "w" : /Avvio mosaico|Completato|DONE|Tempi fasi|Copertura NDVI S2_/.test(l) ? "k" : "";
+    return `<div class="${c}">${esc(l)}</div>`;
+  }).join("");
+  if (atBottom) tail.scrollTop = tail.scrollHeight;
+  drawCharts();
+}
+
+// ---------------------------------------------------------------- storico
+const PH = [["tile", "Tile", "--blue"], ["copertura_tile", "Copertura tile", "--violet"], ["mosaico_stack", "Mosaico STACK", "--amber"],
+  ["mosaico_ndvi", "Mosaico NDVI", "--accent"], ["controllo_copertura", "Controllo copertura", "--red"], ["statistiche", "Statistiche", "--muted"]];
+const num = v => { const n = parseFloat(String(v ?? "").replace(",", ".")); return isNaN(n) ? null : n; };
+let runsData = null, selected = null, view = "live";
+
+function setView(v) {
+  view = v;
+  document.querySelectorAll("#tabs button").forEach(b => b.classList.toggle("on", b.dataset.v === v));
+  $("view-live").classList.toggle("hidden", v !== "live"); $("view-hist").classList.toggle("hidden", v !== "hist");
+  history_replace(v);
+  if (v === "hist") loadRuns(); else drawCharts();
+}
+function history_replace(v) { try { window.history.replaceState(null, "", v === "hist" ? "#storico" + (selected ? "/" + selected : "") : "#"); } catch (e) {} }
+document.querySelectorAll("#tabs button").forEach(b => b.onclick = () => setView(b.dataset.v));
+$("show-short").onchange = () => runsData && renderOthers();
+
+function badge(status) {
+  const cls = status === "ok" ? "b-ok" : status === "in corso" ? "b-run" : status.startsWith("interrotta") ? "b-mid" : "b-ko";
+  return `<span class="badge ${cls}">${esc(status)}</span>`;
+}
+async function loadRuns() {
+  try { runsData = await fetch("/api/runs").then(r => r.json()); } catch (e) { return; }
+  $("reg-path").textContent = runsData.register_path;
+  renderRegister(); renderCompare(); renderOthers();
+  if (selected) openDetail(selected, false);
+}
+function renderRegister() {
+  const reg = runsData.register;
+  $("reg").innerHTML = `<tr><th>ID</th><th>Avvio</th><th>Regione</th><th>Versione codice</th><th class="num">Tile</th><th class="num">Durata</th><th class="num">Copertura</th><th class="num">STACK GB</th><th class="num">Picco RAM</th><th>Parametri</th></tr>` +
+    (reg.length ? reg.slice().reverse().map(e => `<tr class="click${selected === e.id ? " sel" : ""}" data-id="${e.id}">
+      <td><b>${esc(e.id)}</b></td><td>${esc(e.data_avvio)}</td><td>${esc(e.regione)} <span class="muted">${esc(e.mese)}</span></td>
+      <td>${esc(e.versione_codice)}</td><td class="num">${esc(e.tile)}</td><td class="num">${e.durata_min ? fmtMin(num(e.durata_min)) : "—"}</td>
+      <td class="num">${e.copertura_ndvi_pct ? esc(e.copertura_ndvi_pct) + "%" : "—"}</td><td class="num">${esc(e.stack_gb || "—")}</td>
+      <td class="num">${e.picco_ram_sistema_gb ? esc(e.picco_ram_sistema_gb) + " GB" : "—"}</td><td class="wrap" title="${esc(e.parametri)}">${esc(e.parametri)}</td></tr>`).join("")
+      : `<tr><td colspan="10" class="muted">registro non trovato</td></tr>`);
+  $("reg").querySelectorAll("tr.click").forEach(tr => tr.onclick = () => openDetail(tr.dataset.id));
+}
+function renderCompare() {
+  const rows = runsData.register.map(e => ({id: e.id, reg: e.regione, tile: num(e.tile), dur: num(e.durata_min), ver: e.versione_codice}))
+    .filter(r => r.tile && r.dur).map(r => ({...r, spt: r.dur * 60 / r.tile}));
+  const max = Math.max(...rows.map(r => r.spt), 1);
+  $("cmp").innerHTML = rows.map(r => `<span><b>${r.id}</b> <span class="muted">${r.reg} · ${r.tile} tile</span></span>
+    <div class="track" title="${esc(r.ver)}"><i style="width:${r.spt / max * 100}%;background:var(--blue)"></i></div><span>${fmt(r.spt, 1)} s</span>`).join("");
+}
+function renderOthers() {
+  const showShort = $("show-short").checked;
+  const rows = runsData.others.filter(r => showShort || !r.short || r.status === "in corso");
+  $("others").innerHTML = `<tr><th>Avvio</th><th>Regione</th><th>Esito</th><th>Versione</th><th class="num">Tile avviate</th><th class="num">Durata</th><th class="num">Tile/min</th><th class="num">Err. rete</th><th>Cartella</th></tr>` +
+    (rows.length ? rows.map(r => `<tr class="click${selected === r.id ? " sel" : ""}" data-id="${r.id}"><td>${esc(r.start || "—")}</td><td>${esc(r.region)} <span class="muted">${esc(r.region_name || "")}</span></td>
+      <td>${badge(r.status)}</td><td title="${esc(r.version?.source || "")}">${esc(r.version?.label || "?")}</td><td class="num">${r.tiles_started}/${r.tile_count || "?"}</td>
+      <td class="num">${fmtMin(r.duration_min)}</td><td class="num">${fmt(r.tile_rate, 1)}</td><td class="num">${r.net_errors || ""}</td>
+      <td class="muted" title="${esc(r.log)}">${esc(r.outputs_dir.split("/").slice(-2).join("/"))}</td></tr>`).join("")
+      : `<tr><td colspan="9" class="muted">nessuna</td></tr>`) +
+    (showShort ? "" : `<tr><td colspan="9" class="muted" style="font-size:11.5px">${runsData.others.filter(r => r.short).length} prove brevi nascoste (≤3 tile, &lt;5 min)</td></tr>`);
+  $("others").querySelectorAll("tr.click").forEach(tr => tr.onclick = () => openDetail(tr.dataset.id));
+}
+
+function phaseBar(phases) {
+  const tot = PH.reduce((a, [k]) => a + (phases[k] || 0), 0);
+  if (!tot) return `<div class="muted" style="font-size:12px">nessuna fase completa nel log</div>`;
+  return `<div class="pbar">${PH.filter(([k]) => phases[k]).map(([k, l, c]) => `<i style="width:${phases[k] / tot * 100}%;background:var(${c})" title="${l}: ${fmtMin(phases[k])}">${phases[k] / tot > .08 ? fmtMin(phases[k]) : ""}</i>`).join("")}</div>
+    <div class="plegend">${PH.filter(([k]) => phases[k]).map(([k, l, c]) => `<span><i style="background:var(${c})"></i>${l} ${fmtMin(phases[k])}</span>`).join("")}</div>`;
+}
+function runBlock(d) {
+  const crit = Object.entries(d.critical || {});
+  const ev = d.events || [];
+  return `<div style="border-top:1px solid var(--line);padding-top:10px;margin-top:10px">
+    <div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap"><b>${esc(d.log_name)}</b>${badge(d.status)}</div>
+    <div class="muted" style="font-size:12px">${esc(d.start || "")} → ${esc((d.end || "").slice(11))} · ${fmtMin(d.duration_min)} · tile avviate ${d.tiles_started}/${d.tile_count}${d.tile_rate ? " · " + fmt(d.tile_rate, 1) + " tile/min" : ""}${d.coverage ? " · copertura " + esc(d.coverage) : ""}</div>
+    ${phaseBar(d.phases || {})}
+    ${d.params ? `<div class="muted" style="font-size:11.5px;margin-top:6px">Parametri: ${esc(d.params)}</div>` : ""}
+    <div class="muted" style="font-size:11.5px">Versione: ${esc(d.version?.label || "?")} <span title="${esc(d.version?.source || "")}">(${esc(d.version?.source || "")})</span></div>
+    ${crit.length ? `<div style="font-size:12px;margin-top:6px;color:var(--red)">Tile sotto soglia critica: ${crit.map(([t, v]) => `${esc(t)} (${esc(v)})`).join(", ")}</div>` : ""}
+    ${ev.length ? `<details style="margin-top:6px"><summary class="muted" style="cursor:pointer;font-size:12px">${ev.length} warning/errori</summary><div class="log" style="max-height:200px">${ev.map(e => `<div class="${e.level === "WARNING" ? "w" : "e"}">${e.ts.slice(11)} ${esc(e.msg)}</div>`).join("")}</div></details>` : ""}
+    <details style="margin-top:4px"><summary class="muted" style="cursor:pointer;font-size:12px">ultime righe del log</summary><div class="log" style="max-height:260px">${(d.tail || []).map(l => `<div>${esc(l)}</div>`).join("")}</div></details>
+  </div>`;
+}
+function samplesBlock(samples) {
+  if (!samples.length) return `<div class="muted" style="font-size:12px;margin-top:10px">Curve di CPU/RAM/disco/rete non disponibili: il monitor le salva solo per le run seguite dal 01/10 sera in poi.</div>`;
+  return `<div class="grid charts" style="margin-top:12px;margin-bottom:0">
+    <div class="panel"><h2>CPU %</h2><canvas id="d-cpu"></canvas></div><div class="panel"><h2>Memoria GB</h2><canvas id="d-mem"></canvas></div>
+    <div class="panel"><h2>Disco scrittura MB/s</h2><canvas id="d-io"></canvas></div><div class="panel"><h2>Rete download MB/s</h2><canvas id="d-net"></canvas></div></div>`;
+}
+function drawSamples(samples) {
+  if (!samples.length || !$("d-cpu")) return;
+  const t0 = samples[0].t, t1 = samples[samples.length - 1].t, o = {t0, t1};
+  lineChart($("d-cpu"), [{data: samples.map(p => [p.t, p.cpu]), color: "--blue", fill: true}], {...o, ymax: 100});
+  lineChart($("d-mem"), [{data: samples.map(p => [p.t, p.mem]), color: "--accent", fill: true}], {...o, ymax: Math.ceil((status?.host.mem.total) || 16)});
+  lineChart($("d-io"), [{data: samples.map(p => [p.t, p.wr]), color: "--amber", fill: true}], {...o, ymin: 5});
+  lineChart($("d-net"), [{data: samples.map(p => [p.t, p.rx || 0]), color: "--accent", fill: true}], {...o, ymin: 5});
+}
+async function openDetail(id, scroll = true) {
+  selected = id; history_replace("hist");
+  document.querySelectorAll("#reg tr, #others tr").forEach(tr => tr.classList.toggle("sel", tr.dataset.id === id));
+  let d; try { d = await fetch("/api/run?id=" + encodeURIComponent(id)).then(r => r.ok ? r.json() : null); } catch (e) { d = null; }
+  const box = $("detail"); box.classList.remove("hidden");
+  if (!d) { box.innerHTML = `<h2>${esc(id)}</h2><div class="muted">non trovato</div>`; return; }
+  let html;
+  if (d.kind === "register") {
+    const e = d.entry, skip = new Set(["id", "logs", "archive", "archive_notes", "has_samples"]);
+    const labels = {data_avvio: "Avvio", versione_codice: "Versione codice", regione: "Regione", mese: "Mese", macchina: "Macchina", parametri: "Parametri", tile: "Tile",
+      durata_min: "Durata (min)", tempi_fasi: "Tempi fasi", copertura_ndvi_pct: "Copertura NDVI %", min_ndvi: "NDVI min", max_ndvi: "NDVI max", mean_ndvi: "NDVI medio",
+      std_ndvi: "NDVI dev. std", area_vegetata_ha: "Area vegetata ha", stack_gb: "STACK GB", ndvi_gb: "NDVI GB", picco_ram_sistema_gb: "Picco RAM GB", note: "Note"};
+    html = `<h2>${esc(e.id)} · ${esc(e.regione)} ${esc(e.mese)} <button class="seg" style="padding:2px 8px;cursor:pointer;background:transparent;color:var(--muted)" onclick="$('detail').classList.add('hidden');selected=null;document.querySelectorAll('tr.sel').forEach(t=>t.classList.remove('sel'));history_replace('hist')">chiudi ✕</button></h2>
+      <dl class="kv">${Object.entries(e).filter(([k, v]) => !skip.has(k) && v).map(([k, v]) => `<dt>${labels[k] || esc(k)}</dt><dd>${esc(v)}</dd>`).join("")}
+      ${e.archive.length ? `<dt>Archivio</dt><dd>${e.archive.map(esc).join("<br>")}</dd>` : ""}${e.archive_notes.length ? `<dt>Note archivio</dt><dd>${e.archive_notes.map(esc).join("<br>")}</dd>` : ""}</dl>
+      ${d.runs.length ? d.runs.map(runBlock).join("") : `<div class="muted" style="font-size:12px;margin-top:10px">Nessun log archiviato per questo test.</div>`}
+      ${samplesBlock(d.samples)}`;
+  } else {
+    html = `<h2>${esc(d.region)} ${esc(d.region_name || "")} · ${esc(d.month)} <button class="seg" style="padding:2px 8px;cursor:pointer;background:transparent;color:var(--muted)" onclick="$('detail').classList.add('hidden');selected=null;document.querySelectorAll('tr.sel').forEach(t=>t.classList.remove('sel'));history_replace('hist')">chiudi ✕</button></h2>
+      <div class="muted" style="font-size:12px">${esc(d.log)}</div>${runBlock(d)}${samplesBlock(d.samples)}`;
+  }
+  box.innerHTML = html;
+  drawSamples(d.samples || []);
+  if (scroll) box.scrollIntoView({behavior: "smooth", block: "start"});
+}
+(() => { const m = location.hash.match(/^#storico(?:\/(.+))?/); if (m) { selected = m[1] ? decodeURIComponent(m[1]) : null; setTimeout(() => setView("hist"), 0); } })();
+setInterval(() => { if (view === "hist") loadRuns(); }, 30000);
+
+async function tick() {
+  try {
+    const [s, h] = await Promise.all([
+      fetch("/api/status").then(r => r.json()),
+      fetch("/api/history?since=" + lastT).then(r => r.json()),
+    ]);
+    if (s.run && s.run.log !== logKey) { logKey = s.run.log; history = []; }
+    history.push(...h); if (history.length) lastT = history[history.length - 1].t;
+    if (history.length > 6000) history = history.slice(-6000);
+    render(s);
+  } catch (e) {
+    $("err").style.display = "block"; $("err").textContent = "Monitor non raggiungibile: " + e.message;
+  }
+}
+window.addEventListener("resize", drawCharts);
+tick(); setInterval(tick, 2000);
+</script>
+</body>
+</html>

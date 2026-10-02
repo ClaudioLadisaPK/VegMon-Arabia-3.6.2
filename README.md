@@ -12,6 +12,40 @@ Processore Sentinel-2 per:
 
 Il progetto e stato rifattorizzato a partire da `3.6.2.py` in una struttura piu adatta a manutenzione e pubblicazione su GitHub.
 
+## Versione V03 (ottobre 2026): cosa cambia
+
+Formato e nomi degli output invariati (`outputs/S2/{STACK,NDVI,STATS}`, EPSG:3857, 10 m, COG Int16).
+
+- **Niente buchi**: le scene Sentinel-2 vengono scelte anche in base a quanta parte della tile coprono
+  (prima solo per nuvolosita': scene parziali sul bordo dei riquadri MGRS lasciavano tile al 5%).
+  Il fallback stagionale riempie solo i pixel mancanti, non sostituisce piu' la tile del mese.
+  R13 2026-07: copertura da 93,93% a 100%, nessun fallback.
+- **Profili macchina** `--profile wsl` (PC ~15 GB) e `--profile vm` (VM 72 vCPU / 240 GB);
+  ogni parametro esplicito ha la precedenza sul profilo. `python 3.6.2.py --help` mostra i parametri
+  divisi in "Fase tile" e "Fase mosaico".
+- **AOI grandi**: `--aoi-simplify-m 5` (mezzo pixel) e controllo copertura NDVI veloce (R05: da ~73 min a secondi).
+- **Rete instabile**: tentativi e timeout HTTP configurabili (`--http-timeout`, `--http-max-retry`),
+  attesa che Planetary Computer torni raggiungibile (`--network-wait-max-seconds`); una tile fallita
+  non ferma la regione.
+- **Ripresa sicura**: file temporanei `.partial` rinominati solo a fine scrittura; alla ripresa si
+  saltano tile e mosaici gia' completi e la copertura dei mosaici esistenti viene ricontrollata davvero
+  (un mese gia' presente sotto il 98% risulta `failed_quality`).
+- **Mai interpolazione**: gap-fill rimosso.
+- **Log**: riga `Parametri:` per fase e riga finale `Tempi fasi <regione>: ...`.
+- **Dashboard** in `tools/dashboard` (Linux/WSL e Windows): `tools\dashboard\avvia_dashboard.bat`,
+  poi http://localhost:8765.
+- **Registro test** in `test_runs/registro_test.csv`.
+
+Comando consigliato sulla VM Windows (oppure `tools\windows\run_vegmon.ps1`):
+
+```powershell
+python 3.6.2.py --region R12 --month 2026-07 --profile vm --aoi-simplify-m 5 `
+  --http-timeout 120 --http-max-retry 10 --network-wait-max-seconds 3600 --outputs-dir outputs_test\R12_vm
+```
+
+Le sezioni seguenti descrivono setup e uso generale; dove riportano parametri numerici di performance
+fanno fede i profili sopra.
+
 ## Stato operativo
 
 Il target operativo e una VM Windows con input/output locali. Per evitare problemi di DLL con

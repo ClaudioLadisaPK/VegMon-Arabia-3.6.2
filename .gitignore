@@ -23,6 +23,7 @@ dist/
 # Project outputs
 outputs/
 outputs_*/
+tools/dashboard/history/
 WORKING_S2/
 S2/
 S2_OUTPUT/
