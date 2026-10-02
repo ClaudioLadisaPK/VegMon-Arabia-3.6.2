@@ -29,7 +29,33 @@ Get-Content "$Root\resume_20261002_stderr*" -Tail 20 -ErrorAction SilentlyContin
 ```
 
 Se c'e' un processo con `3.6.2.py` o `msimne` nella riga di comando: **fermati** e chiedi all'utente se aspettare o interromperlo.
-Riporta comunque il contenuto dei file `resume_20261002_*`.
+Riporta comunque il contenuto dei file `resume_20261002_*`. Mai sostituire il codice con una run attiva: i worker Dask
+avviati dopo leggerebbero il codice nuovo mentre il processo principale usa il vecchio.
+
+Per aiutare l'utente a decidere, riporta regione, mese e fase della run (ultime righe del log):
+
+```powershell
+$log = Get-ChildItem "$Root\outputs\logs\*.log" | Sort-Object LastWriteTime | Select-Object -Last 1
+Get-Content $log.FullName -Tail 15
+```
+
+- **Fase mosaico** (righe `Chiusura client Dask`, `gdalwarp`, `gdal_translate` o file `_tmp_S2_*` in `outputs\working_s2`):
+  conviene **aspettare** che finisca.
+- **Se l'utente decide di interromperla**:
+
+```powershell
+# 1. ferma il processo principale e i worker (usa i ProcessId trovati sopra)
+Stop-Process -Id <ProcessId> -Force
+Get-CimInstance Win32_Process -Filter "Name='python.exe'" | Where-Object { $_.CommandLine -match "multiprocessing" } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
+# 2. la V02 scrive le tile direttamente col nome finale: elimina le cartelle tile modificate negli ultimi 15 minuti
+#    (potrebbero essere scritte a meta'); verranno rifatte alla ripresa
+Get-ChildItem "$Root\outputs\working_s2" -Directory | Where-Object { $_.LastWriteTime -gt (Get-Date).AddMinutes(-15) } |
+  ForEach-Object { Write-Host "Rimuovo tile incompleta: $($_.Name)"; Remove-Item $_.FullName -Recurse -Force }
+```
+
+  Prosegui con il passo 2. Dopo l'aggiornamento (passo 9 superato) l'utente rilancia **la stessa regione e lo stesso mese**
+  con la V03 sulla cartella `outputs\`: le tile gia' pronte vengono riusate, quelle con buchi vengono ricalcolate
+  automaticamente nella fase di copertura.
 
 ## 2. Task Scheduler non attivo
 
