@@ -78,3 +78,15 @@ def test_fill_holes_keeps_current_pixels(tmp_path: Path):
     with rasterio.open(paths.stack) as src:
         stack = src.read()
     assert (stack[:, :, 3:] == 3000).all() and (stack[:, :, :3] == 2000).all()
+
+
+def test_low_cloud_full_scenes_preferred_over_strips():
+    import msimne.stac as stac
+    strips = [_item(f"strip{i}", shapely.box(0.95, 0, 1.2, 1), 0.0) for i in range(10)]
+    full = [_item(f"full{i}", shapely.box(-0.1, -0.1, 1.1, 1.1), 1.0 + i * 0.3) for i in range(10)]
+    items = strips + full
+    fraction = lambda it: shapely.geometry.shape(it.geometry).intersection(TILE).area / TILE.area
+    items.sort(key=lambda it: (int(it.properties["eo:cloud_cover"] // stac.CLOUD_BUCKET_PCT), -round(fraction(it), 2), it.properties["eo:cloud_cover"]))
+    selected, coverage = select_items_for_coverage(items, TILE, 6)
+    assert coverage == 1.0
+    assert len(selected) == 6 and all(i.id.startswith("full") for i in selected)

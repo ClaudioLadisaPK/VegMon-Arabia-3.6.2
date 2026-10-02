@@ -88,6 +88,10 @@ class StacItemCache:
 
 COVERAGE_GRID_SIZE = 40
 MAX_SCENES_FACTOR = 3
+# Scene con nuvolosita' nella stessa fascia (es. 0-5%) sono equivalenti: le nuvole le toglie l'SCL.
+# Dentro la fascia si preferiscono le scene che coprono piu' tile, cosi' le strisce parziali
+# servono solo dove mancano scene complete (meno scene per tile = run piu' veloce).
+CLOUD_BUCKET_PCT = 5.0
 
 
 def _coverage_points(geom_wgs84, size: int = COVERAGE_GRID_SIZE) -> np.ndarray:
@@ -210,8 +214,11 @@ def load_s2_median(
         footprint = _item_footprint(item)
         return 1.0 if footprint is None else footprint.intersection(geom_wgs84).area / tile_area
 
-    # a parita' di nuvolosita' prima le scene che coprono piu' tile
-    items.sort(key=lambda item: (item.properties.get("eo:cloud_cover", 100), -footprint_fraction(item)))
+    def sort_key(item):
+        cloud = item.properties.get("eo:cloud_cover", 100)
+        return (int(cloud // CLOUD_BUCKET_PCT), -round(footprint_fraction(item), 2), cloud)
+
+    items.sort(key=sort_key)
     candidate_counts = [settings.max_items]
     if use_scl and settings.initial_max_items < settings.max_items:
         candidate_counts.insert(0, settings.initial_max_items)
