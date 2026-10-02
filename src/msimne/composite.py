@@ -75,6 +75,53 @@ def fallback_marker_path(paths: TilePaths) -> Path:
     return paths.ndvi.with_name(f"{paths.ndvi.stem}.fallback_noscl")
 
 
+def fallback_tile_paths(paths: TilePaths) -> TilePaths:
+    return TilePaths(
+        stack=paths.stack.with_name(f"{paths.stack.stem}.fallback{paths.stack.suffix}"),
+        ndvi=paths.ndvi.with_name(f"{paths.ndvi.stem}.fallback{paths.ndvi.suffix}"),
+    )
+
+
+def _fill_raster(current: Path, fallback: Path, nodata: int) -> bool:
+    """Copia nei pixel nodata di `current` i valori validi di `fallback`. False se le griglie differiscono."""
+    with rasterio.open(current) as cur, rasterio.open(fallback) as fb:
+        if (cur.width, cur.height, cur.count, cur.transform) != (fb.width, fb.height, fb.count, fb.transform):
+            return False
+        profile = cur.profile.copy()
+        scales, offsets = cur.scales, cur.offsets
+        data = cur.read()
+        fill = fb.read()
+    holes = (data == nodata) & (fill != nodata)
+    if not holes.any():
+        return True
+    data[holes] = fill[holes]
+    tmp = _partial_path(current)
+    with rasterio.open(tmp, "w", **profile) as dst:
+        dst.write(data)
+        dst.scales = scales
+        dst.offsets = offsets
+    os.replace(tmp, current)
+    return True
+
+
+def fill_holes_from_fallback(paths: TilePaths, fallback_paths: TilePaths, nodata: int) -> float:
+    """Riempie solo i buchi della tile del mese corrente con il composite degli anni precedenti.
+
+    I pixel del mese corrente non vengono mai sostituiti. Se le griglie non coincidono (caso
+    anomalo) si tiene la versione con copertura maggiore. Restituisce la copertura finale.
+    """
+    current_coverage = raster_coverage_ratio(paths.ndvi, nodata)
+    if _fill_raster(paths.ndvi, fallback_paths.ndvi, nodata) and _fill_raster(paths.stack, fallback_paths.stack, nodata):
+        return raster_coverage_ratio(paths.ndvi, nodata)
+    fallback_coverage = raster_coverage_ratio(fallback_paths.ndvi, nodata)
+    LOGGER.warning("Griglia fallback diversa da quella del mese corrente: tengo la versione con copertura maggiore")
+    if fallback_coverage > current_coverage:
+        os.replace(fallback_paths.stack, paths.stack)
+        os.replace(fallback_paths.ndvi, paths.ndvi)
+        return fallback_coverage
+    return current_coverage
+
+
 def build_tile_products(med: xr.Dataset, paths: TilePaths, settings: Settings, crs_to_use, crs_str: str) -> None:
     # Scrittura su file .partial e rinomina finale: una tile interrotta a meta' non viene
     # mai scambiata per completa alla ripresa (tile_outputs_exist controlla i nomi finali).
@@ -294,16 +341,17 @@ def compute_sentinel2_composite(
 
     fallback_ranges = seasonal_fallback_ranges(start, end, settings.seasonal_fallback_years)
     LOGGER.warning(
-        "Tile %s copertura %.2f%% sotto soglia %.2f%%: fallback stagionale anni precedenti %s senza SCL",
+        "Tile %s copertura %.2f%% sotto soglia %.2f%%: riempio solo i buchi con gli anni precedenti %s senza SCL",
         tile_id,
         coverage * 100,
         settings.seasonal_fallback_coverage_threshold * 100,
         ", ".join(f"{rng[0]}->{rng[1]}" for rng in fallback_ranges),
     )
-    remove_tile_products(paths)
+    fallback_paths = fallback_tile_paths(paths)
+    remove_tile_products(fallback_paths)
     status = build_tile_for_ranges(
         geom,
-        paths,
+        fallback_paths,
         fallback_ranges,
         settings,
         use_scl=False,
@@ -311,10 +359,18 @@ def compute_sentinel2_composite(
         item_cache=item_cache,
     )
     if status != TileBuildStatus.BUILT:
-        LOGGER.warning("Fallback stagionale senza dataset valido per %s %s", tile_id, base)
+        LOGGER.warning("Fallback stagionale senza dataset valido per %s %s: resta il mese corrente", tile_id, base)
         return
-    fallback_coverage = raster_coverage_ratio(paths.ndvi, settings.ndvi_nodata)
-    LOGGER.info("Tile %s copertura dopo fallback stagionale: %.2f%%", tile_id, fallback_coverage * 100)
+    try:
+        filled_coverage = fill_holes_from_fallback(paths, fallback_paths, settings.ndvi_nodata)
+    finally:
+        remove_tile_products(fallback_paths)
+    LOGGER.info(
+        "Tile %s copertura dopo riempimento buchi con anni precedenti: %.2f%% (mese corrente %.2f%%)",
+        tile_id,
+        filled_coverage * 100,
+        coverage * 100,
+    )
     if not use_scl:
         # Il ricalcolo "critico" in ensure_full_grid_coverage (senza SCL, force) ripeterebbe
         # esattamente questo percorso con gli stessi dati: il marker permette di saltarlo.

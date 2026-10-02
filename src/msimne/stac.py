@@ -6,6 +6,8 @@ from threading import Lock
 
 import numpy as np
 import odc.stac
+import shapely
+from shapely.geometry import shape
 import planetary_computer
 import rasterio
 import xarray as xr
@@ -84,6 +86,61 @@ class StacItemCache:
         return [planetary_computer.sign(item) for item in items]
 
 
+COVERAGE_GRID_SIZE = 40
+MAX_SCENES_FACTOR = 3
+
+
+def _coverage_points(geom_wgs84, size: int = COVERAGE_GRID_SIZE) -> np.ndarray:
+    minx, miny, maxx, maxy = geom_wgs84.bounds
+    xs = np.linspace(minx, maxx, size + 2)[1:-1]
+    ys = np.linspace(miny, maxy, size + 2)[1:-1]
+    grid_x, grid_y = np.meshgrid(xs, ys)
+    inside = shapely.contains_xy(geom_wgs84, grid_x.ravel(), grid_y.ravel())
+    return np.column_stack([grid_x.ravel()[inside], grid_y.ravel()[inside]])
+
+
+def _item_footprint(item):
+    geometry = getattr(item, "geometry", None)
+    if not geometry:
+        return None
+    try:
+        footprint = shape(geometry)
+    except Exception:
+        return None
+    return footprint if not footprint.is_empty else None
+
+
+def select_items_for_coverage(items: list, geom_wgs84, depth: int) -> tuple[list, float]:
+    """Sceglie le scene meno nuvolose garantendo che ogni zona della tile ne abbia almeno `depth`.
+
+    Le scene sono gia' ordinate per nuvolosita'. Una scena viene presa solo se copre almeno una
+    zona della tile che ha ancora meno di `depth` scene: cosi' le scene parziali (bordo di un
+    riquadro MGRS o di un'orbita), spesso con nuvolosita' quasi nulla, non possono piu' occupare
+    tutti i posti lasciando scoperto il resto della tile. Il limite MAX_SCENES_FACTOR * depth
+    tiene il volume di dati simile a prima (le scene parziali vengono lette solo sulla loro parte).
+    Restituisce le scene scelte e la quota della tile coperta da almeno una di esse.
+    """
+    points = _coverage_points(geom_wgs84)
+    if len(points) == 0 or depth <= 0:
+        return items[:depth], 1.0
+    counts = np.zeros(len(points), dtype=np.int32)
+    selected = []
+    max_scenes = max(depth, depth * MAX_SCENES_FACTOR)
+    for item in items:
+        footprint = _item_footprint(item)
+        if footprint is None:
+            covers = np.ones(len(points), dtype=bool)
+        else:
+            covers = shapely.contains_xy(footprint, points[:, 0], points[:, 1])
+        if not covers.any() or not (counts[covers] < depth).any():
+            continue
+        selected.append(item)
+        counts[covers] += 1
+        if (counts >= depth).all() or len(selected) >= max_scenes:
+            break
+    return selected, float(np.count_nonzero(counts > 0)) / len(points)
+
+
 def open_catalog(settings: Settings) -> StacClient:
     http_retry = Retry(
         total=settings.http_max_retry,
@@ -147,7 +204,14 @@ def load_s2_median(
         return None
 
     found_items = len(items)
-    items.sort(key=lambda item: item.properties.get("eo:cloud_cover", 100))
+    tile_area = geom_wgs84.area or 1.0
+
+    def footprint_fraction(item) -> float:
+        footprint = _item_footprint(item)
+        return 1.0 if footprint is None else footprint.intersection(geom_wgs84).area / tile_area
+
+    # a parita' di nuvolosita' prima le scene che coprono piu' tile
+    items.sort(key=lambda item: (item.properties.get("eo:cloud_cover", 100), -footprint_fraction(item)))
     candidate_counts = [settings.max_items]
     if use_scl and settings.initial_max_items < settings.max_items:
         candidate_counts.insert(0, settings.initial_max_items)
@@ -159,11 +223,13 @@ def load_s2_median(
 
     last_low_ratio = None
     for item_count in item_counts:
-        selected_items = items[:item_count]
+        selected_items, footprint_coverage = select_items_for_coverage(items, geom_wgs84, item_count)
         LOGGER.info(
-            "Scene Sentinel-2 trovate=%s usate=%s max_items=%s finestre=%s",
+            "Scene Sentinel-2 trovate=%s usate=%s profondita=%s copertura_footprint=%.0f%% max_items=%s finestre=%s",
             found_items,
             len(selected_items),
+            item_count,
+            footprint_coverage * 100,
             settings.max_items,
             ", ".join(found_by_range),
         )
