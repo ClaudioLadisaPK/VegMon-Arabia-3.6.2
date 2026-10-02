@@ -7,6 +7,7 @@ del processore VegMon in `C:\VegMon-Arabia-3.6.2` con la versione V03 contenuta 
 ## Regole
 
 - **Non modificare, spostare o cancellare nulla dentro `C:\VegMon-Arabia-3.6.2\outputs\`.** Contiene prodotti validi.
+  Unica eccezione: al passo 10 le cartelle tile **rotte** in `outputs\working_s2\`, e solo dopo l'OK dell'utente.
 - Non cancellare il backup che crei al passo 3.
 - Se un controllo dei passi 1-2 non torna, **fermati e chiedi all'utente** prima di proseguire.
 - Esegui i passi in ordine e alla fine riporta all'utente l'esito di ogni passo (comandi, output rilevante, errori).
@@ -163,7 +164,31 @@ Get-Content "$Root\outputs_test\R12_vm\S2\STATS\*.csv"
 Su un PC di test R12 richiede ~7 minuti. Riporta all'utente le righe trovate (soprattutto `Tempi fasi R12` e
 `Copertura NDVI`) e la durata. Se la copertura e' >= 98% e il CSV esiste, il test e' superato.
 
-## 10. Verifica che gli output non siano cambiati
+## 10. Tile di una run interrotta (es. R05 iniziata con la V02)
+
+Se in `outputs\working_s2\` ci sono tile di una regione non completata, la V03 le riusa (salta quelle gia' fatte e
+ricalcola automaticamente quelle con copertura < 98%). La V02 pero' scriveva le tile direttamente col nome finale:
+una tile interrotta a meta' sembra completa. Controllale:
+
+```powershell
+Set-Location $Root
+(Get-ChildItem "$Root\outputs\working_s2" -Directory -ErrorAction SilentlyContinue | Measure-Object).Count
+$log = Get-ChildItem "$Root\outputs\logs\*.log" | Sort-Object LastWriteTime | Select-Object -Last 1
+Select-String -Path $log.FullName -Pattern "Regione R", "Tile count" | Select-Object -First 3 | ForEach-Object { $_.Line }
+& $Py tools\verifica_tile.py outputs\working_s2
+```
+
+Riporta all'utente quante tile ci sono, di quale regione e quante risultano rotte. **Solo con il suo OK**:
+
+```powershell
+& $Py tools\verifica_tile.py outputs\working_s2 --rimuovi
+```
+
+Per riprendere quella regione con la V03 **senza** `-OutputsDir` (cosi' usa `outputs\` e riusa le tile), ad esempio:
+`powershell -ExecutionPolicy Bypass -File tools\windows\run_vegmon.ps1 -Region R05 -Month <mese della run interrotta>`.
+Il mese si legge nel nome del log (`run_<mese>_<regione>_...log`). Lanciarla solo quando l'utente lo chiede.
+
+## 11. Verifica che gli output non siano cambiati
 
 ```powershell
 $prima = Import-Csv "C:\VegMon_outputs_prima_$Stamp.csv"
@@ -171,16 +196,16 @@ $dopo  = Get-ChildItem "$Root\outputs" -Recurse -File | Select-Object FullName, 
 Compare-Object $prima $dopo -Property FullName, Length | Format-Table -AutoSize
 ```
 
-Atteso: **nessuna differenza** (eventuali righe nuove possono essere solo log in `outputs\logs` se qualcuno ha lanciato
-una run su `outputs\`; segnalale).
+Atteso: **nessuna differenza** in `outputs\S2\`, `outputs\state\`, `outputs\reports\`. Le uniche differenze ammesse
+sono le cartelle tile rotte rimosse al passo 10 (in `outputs\working_s2\`); segnala tutto il resto.
 
-## 11. Pulizia e resoconto
+## 12. Pulizia e resoconto
 
 ```powershell
 Remove-Item "C:\VegMon_V03_tmp" -Recurse -Force
 ```
 
-Non cancellare `C:\VegMon_V03.zip` ne' il backup. Riporta all'utente: esito passi 1-10, versioni librerie,
+Non cancellare `C:\VegMon_V03.zip` ne' il backup. Riporta all'utente: esito passi 1-11, versioni librerie,
 risultato test R12, eventuali problemi.
 
 ## Rollback (solo se qualcosa non funziona)
